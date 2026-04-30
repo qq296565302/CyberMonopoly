@@ -1,0 +1,212 @@
+{
+  "name": "cyber-monopoly",
+  "displayName": "赛博大富翁",
+  "description": "A-share market tool hidden in your editor. Perfect for... coding.",
+  "version": "1.0.0",
+  "publisher": "cyber-monopoly",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onView:cyberMonopolyWatchlist",
+    "onView:cyberMonopolyNews",
+    "onCommand:cyberMonopoly.showOverview",
+    "onCommand:cyberMonopoly.openChart",
+    "onCommand:cyberMonopoly.openAiChat",
+    "onCommand:cyberMonopoly.addToWatchlist",
+    "onCommand:cyberMonopoly.refreshQuotes",
+    "onCommand:cyberMonopoly.refreshNews",
+    "onCommand:cyberMonopoly.toggleStatusBar",
+    "onCommand:cyberMonopoly.openSettings",
+    "onCommand:cyberMonopoly.openNewsDetail"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cyberMonopoly.showOverview",
+        "title": "查看行情概览",
+        "category": "赛博大富翁",
+        "icon": "$(chart-line)"
+      },
+      {
+        "command": "cyberMonopoly.openChart",
+        "title": "打开K线图",
+        "category": "赛博大富翁",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "cyberMonopoly.refreshQuotes",
+        "title": "刷新行情",
+        "category": "赛博大富翁",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cyberMonopoly.addToWatchlist",
+        "title": "添加自选股...",
+        "category": "赛博大富翁",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cyberMonopoly.removeFromWatchlist",
+        "title": "移除自选股",
+        "category": "赛博大富翁"
+      },
+      {
+        "command": "cyberMonopoly.refreshNews",
+        "title": "刷新快讯",
+        "category": "赛博大富翁",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cyberMonopoly.openAiChat",
+        "title": "AI助手",
+        "category": "赛博大富翁",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "cyberMonopoly.openSettings",
+        "title": "设置",
+        "category": "赛博大富翁",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "cyberMonopoly.toggleStatusBar",
+        "title": "切换状态栏行情",
+        "category": "赛博大富翁"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "cyberMonopoly.showOverview",
+        "key": "ctrl+shift+q",
+        "mac": "cmd+shift+q"
+      },
+      {
+        "command": "cyberMonopoly.openAiChat",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "cyberMonopoly.refreshQuotes",
+        "key": "f5",
+        "when": "cyberMonopoly:focus"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cyberMonopoly.refreshQuotes",
+          "when": "view == cyberMonopolyWatchlist",
+          "group": "navigation"
+        },
+        {
+          "command": "cyberMonopoly.addToWatchlist",
+          "when": "view == cyberMonopolyWatchlist",
+          "group": "navigation"
+        },
+        {
+          "command": "cyberMonopoly.refreshNews",
+          "when": "view == cyberMonopolyNews",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cyberMonopoly.openChart",
+          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
+          "group": "inline"
+        },
+        {
+          "command": "cyberMonopoly.removeFromWatchlist",
+          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
+          "group": "inline"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cyberMonopoly",
+          "title": "赛博大富翁",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "cyberMonopoly": [
+        {
+          "id": "cyberMonopolyWatchlist",
+          "name": "自选股"
+        },
+        {
+          "id": "cyberMonopolyNews",
+          "name": "快讯",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "赛博大富翁",
+      "properties": {
+        "cyberMonopoly.refreshInterval": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "maximum": 60,
+          "description": "行情刷新间隔 (秒)"
+        },
+        "cyberMonopoly.enableStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否显示状态栏行情"
+        },
+        "cyberMonopoly.enableAlert": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用价格异动提醒"
+        },
+        "cyberMonopoly.llmBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "LLM API Base URL (OpenAI 兼容)"
+        },
+        "cyberMonopoly.llmApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "LLM API Key"
+        },
+        "cyberMonopoly.llmModel": {
+          "type": "string",
+          "default": "gpt-3.5-turbo",
+          "description": "LLM 模型名称"
+        },
+        "cyberMonopoly.colorTheme": {
+          "type": "string",
+          "enum": ["a-stock", "us-stock", "custom"],
+          "default": "a-stock",
+          "description": "涨跌颜色主题"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "@vscode/test-cli": "^0.0.6",
+    "@vscode/test-electron": "^2.3.9"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
+  }
+}
