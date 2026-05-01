@@ -35,22 +35,84 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerWatchlistCommands = registerWatchlistCommands;
 const vscode = __importStar(require("vscode"));
-function registerWatchlistCommands(context, provider, chartView) {
+const eastmoney_1 = require("../api/eastmoney");
+function extractStockInfo(itemOrCode, name) {
+    if (typeof itemOrCode === 'string') {
+        return { code: itemOrCode, name: name || '' };
+    }
+    if (itemOrCode?.stock) {
+        return { code: itemOrCode.stock.code, name: itemOrCode.stock.name };
+    }
+    if (itemOrCode?.hotStock) {
+        return { code: itemOrCode.hotStock.code, name: itemOrCode.hotStock.name };
+    }
+    return null;
+}
+function registerWatchlistCommands(context, provider, chartView, detailPanel) {
     const disposables = [];
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.addToWatchlist', async () => {
-        const input = await vscode.window.showInputBox({
-            prompt: '输入股票代码',
-            placeHolder: '例如: 600519',
-            validateInput: (value) => {
-                if (!value || !/^\d{6}$/.test(value.trim())) {
-                    return '请输入6位数字股票代码';
+        const quickPick = vscode.window.createQuickPick();
+        quickPick.placeholder = '输入股票代码或中文名称搜索';
+        quickPick.title = '添加自选股';
+        quickPick.items = [];
+        quickPick.busy = false;
+        let debounceTimer;
+        quickPick.onDidChangeValue((value) => {
+            if (debounceTimer)
+                clearTimeout(debounceTimer);
+            const keyword = value.trim();
+            if (!keyword) {
+                quickPick.items = [];
+                return;
+            }
+            quickPick.busy = true;
+            debounceTimer = setTimeout(async () => {
+                try {
+                    const results = await (0, eastmoney_1.searchStocks)(keyword);
+                    quickPick.items = results.map(r => ({
+                        label: `$(search) ${r.name}`,
+                        description: r.code,
+                        detail: `${r.type || '股票'}  ${r.market || ''}`,
+                        _stock: r,
+                    }));
+                    if (quickPick.items.length === 0 && /^\d{6}$/.test(keyword)) {
+                        quickPick.items = [{
+                                label: `$(add) 直接添加 ${keyword}`,
+                                description: '',
+                                detail: '未找到匹配名称，按代码直接添加',
+                                _stock: { code: keyword, name: '' },
+                            }];
+                    }
                 }
-                return null;
-            },
+                catch {
+                    if (/^\d{6}$/.test(keyword)) {
+                        quickPick.items = [{
+                                label: `$(add) 直接添加 ${keyword}`,
+                                description: '',
+                                detail: '搜索失败，按代码直接添加',
+                                _stock: { code: keyword, name: '' },
+                            }];
+                    }
+                }
+                finally {
+                    quickPick.busy = false;
+                }
+            }, 300);
         });
-        if (input) {
-            await provider.addStock(input.trim());
-        }
+        quickPick.onDidAccept(async () => {
+            const selected = quickPick.selectedItems[0];
+            if (selected && selected._stock) {
+                const s = selected._stock;
+                quickPick.hide();
+                await provider.addStock(s.code, s.name || undefined);
+            }
+        });
+        quickPick.onDidHide(() => {
+            if (debounceTimer)
+                clearTimeout(debounceTimer);
+            quickPick.dispose();
+        });
+        quickPick.show();
     }));
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.removeFromWatchlist', async (item) => {
         if (item && item.stock) {
@@ -86,6 +148,32 @@ function registerWatchlistCommands(context, provider, chartView) {
         if (!picked)
             return;
         provider.sortStocks(picked.value);
+    }));
+    disposables.push(vscode.commands.registerCommand('cyberMonopoly.addHotToWatchlist', async (item) => {
+        if (item?.hotStock) {
+            await provider.addStock(item.hotStock.code, item.hotStock.name);
+        }
+    }));
+    disposables.push(vscode.commands.registerCommand('cyberMonopoly.openStockNews', (itemOrCode, name) => {
+        if (!detailPanel)
+            return;
+        const info = extractStockInfo(itemOrCode, name);
+        if (info)
+            detailPanel.show(info.code, info.name, 'news');
+    }));
+    disposables.push(vscode.commands.registerCommand('cyberMonopoly.openStockReport', (itemOrCode, name) => {
+        if (!detailPanel)
+            return;
+        const info = extractStockInfo(itemOrCode, name);
+        if (info)
+            detailPanel.show(info.code, info.name, 'report');
+    }));
+    disposables.push(vscode.commands.registerCommand('cyberMonopoly.openStockFinance', (itemOrCode, name) => {
+        if (!detailPanel)
+            return;
+        const info = extractStockInfo(itemOrCode, name);
+        if (info)
+            detailPanel.show(info.code, info.name, 'finance');
     }));
     return disposables;
 }

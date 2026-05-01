@@ -45,6 +45,7 @@ const chartPanel_1 = require("./webview/chartPanel");
 const aiChatPanel_1 = require("./webview/aiChatPanel");
 const overviewPanel_1 = require("./webview/overviewPanel");
 const settingsPanel_1 = require("./webview/settingsPanel");
+const stockDetailPanel_1 = require("./webview/stockDetailPanel");
 const llmClient_1 = require("./chat/llmClient");
 const watchlist_1 = require("./commands/watchlist");
 const news_1 = require("./commands/news");
@@ -62,6 +63,7 @@ let newsProviderRef;
 let overviewPanelRef;
 let settingsPanelRef;
 let aiChatPanelRef;
+let stockDetailPanelRef;
 async function activate(context) {
     isActivated = true;
     const stateManager = new stateManager_1.StateManager(context.globalState);
@@ -71,10 +73,12 @@ async function activate(context) {
     const chartViewProvider = new chartPanel_1.ChartViewProvider(context);
     const overviewPanel = new overviewPanel_1.OverviewPanel(watchlistProvider);
     const settingsPanel = new settingsPanel_1.SettingsPanel();
+    const stockDetailPanel = new stockDetailPanel_1.StockDetailPanel();
     chartViewProviderRef = chartViewProvider;
     newsProviderRef = newsProvider;
     overviewPanelRef = overviewPanel;
     settingsPanelRef = settingsPanel;
+    stockDetailPanelRef = stockDetailPanel;
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('cyberMonopolyChart', chartViewProvider));
     const config = vscode.workspace.getConfiguration('cyberMonopoly');
     const llmBaseUrl = config.get('llmBaseUrl', '');
@@ -90,7 +94,7 @@ async function activate(context) {
     aiChatPanel.setWatchlistProvider(watchlistProvider);
     aiChatPanelRef = aiChatPanel;
     alertManager = new alert_1.AlertManager(context.globalState);
-    context.subscriptions.push(...(0, watchlist_1.registerWatchlistCommands)(context, watchlistProvider, chartViewProvider), ...(0, news_1.registerNewsCommands)(context, newsProvider), ...(0, ai_1.registerAiCommands)(context, llm, aiChatPanel), ...(0, ai_1.registerSettingsCommands)(context, settingsPanel), ...(0, ai_1.registerOverviewCommands)(context, overviewPanel), ...(0, ai_1.registerStatusBarCommands)(context), vscode.commands.registerCommand('cyberMonopoly.toggleBossKey', () => {
+    context.subscriptions.push(...(0, watchlist_1.registerWatchlistCommands)(context, watchlistProvider, chartViewProvider, stockDetailPanel), ...(0, news_1.registerNewsCommands)(context, newsProvider), ...(0, ai_1.registerAiCommands)(context, llm, aiChatPanel), ...(0, ai_1.registerSettingsCommands)(context, settingsPanel), ...(0, ai_1.registerOverviewCommands)(context, overviewPanel), ...(0, ai_1.registerStatusBarCommands)(context), vscode.commands.registerCommand('cyberMonopoly.toggleBossKey', () => {
         const cfg = vscode.workspace.getConfiguration('cyberMonopoly');
         if (!cfg.get('bossKeyEnabled', true)) {
             vscode.window.showInformationMessage('老板键未启用，请在设置中开启');
@@ -164,6 +168,7 @@ function applyBossMode(saturation) {
     overviewPanelRef?.setBossMode(bossMode, saturation);
     settingsPanelRef?.setBossMode(bossMode, saturation);
     aiChatPanelRef?.setBossMode(bossMode, saturation);
+    stockDetailPanelRef?.setBossMode(bossMode, saturation);
 }
 function startAutoRefresh() {
     if (refreshTimer)

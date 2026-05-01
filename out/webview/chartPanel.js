@@ -97,7 +97,10 @@ class ChartViewProvider {
     .toolbar button.active { opacity: 1; outline: 1px solid var(--vscode-focusBorder); }
     .toolbar .title { flex: 1; font-weight: bold; font-size: 13px; min-width: 100px; }
     .toolbar .sep { width: 1px; height: 14px; background: var(--vscode-panel-border); }
-    #chart-container { height: calc(100% - 36px); width: 100%; position: relative; }
+    #chart-area { height: calc(100% - 36px); width: 100%; display: flex; flex-direction: column; }
+    #price-container { flex: 7; width: 100%; position: relative; }
+    #volume-container { flex: 3; width: 100%; position: relative; border-top: 1px solid rgba(128,128,128,0.2); }
+    #volume-container .vol-label { position: absolute; top: 4px; left: 10px; z-index: 10; font-size: 10px; color: var(--vscode-descriptionForeground); pointer-events: none; }
     .loading { display: flex; justify-content: center; align-items: center; height: 200px; color: var(--vscode-descriptionForeground); }
     #info-panel {
       position: absolute; top: 8px; left: 10px; z-index: 10;
@@ -124,103 +127,229 @@ class ChartViewProvider {
     <span class="sep"></span>
     <button id="btn-refresh">↻ 刷新</button>
   </div>
-  <div id="chart-container"><div class="loading">加载中...</div><div id="info-panel"></div></div>
+  <div id="chart-area">
+    <div id="price-container"><div class="loading">加载中...</div><div id="info-panel"></div></div>
+    <div id="volume-container"><span class="vol-label">成交量</span></div>
+  </div>
 
   <script src="${scriptUri}"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    let chart = null;
+    let priceChart = null;
+    let volChart = null;
     let mainSeries = null;
+    let volumeSeries = null;
     let chartType = 'candlestick';
     let currentRawData = [];
     let prevClose = 0;
+    let syncingTimeScale = false;
     let $infoPanel = document.getElementById('info-panel');
 
-    function ensureChart() {
-      const container = document.getElementById('chart-container');
-      if (!chart) {
-        container.innerHTML = '';
+    function getLayoutOpts() {
+      var bg = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background').trim();
+      var fg = getComputedStyle(document.body).getPropertyValue('--vscode-foreground').trim();
+      return { background: { type: 'solid', color: bg }, textColor: fg };
+    }
+
+    function getGridOpts() {
+      return {
+        vertLines: { color: 'rgba(128,128,128,0.1)' },
+        horzLines: { color: 'rgba(128,128,128,0.1)' },
+      };
+    }
+
+    function syncTimeScales(fromChart, toChart) {
+      if (syncingTimeScale) return;
+      syncingTimeScale = true;
+      try {
+        var logical = fromChart.timeScale().getVisibleLogicalRange();
+        if (logical) {
+          toChart.timeScale().setVisibleLogicalRange(logical);
+        }
+      } catch (e) {}
+      syncingTimeScale = false;
+    }
+
+    function syncCrosshair(fromChart, toChart) {
+      fromChart.subscribeCrosshairMove(function(param) {
+        if (!param || !param.time) return;
+        if (toChart) {
+          try {
+            toChart.timeScale().scrollToPosition(
+              fromChart.timeScale().scrollPosition(), false
+            );
+          } catch (e) {}
+        }
+      });
+    }
+
+    function ensureCharts() {
+      var priceContainer = document.getElementById('price-container');
+      var volContainer = document.getElementById('volume-container');
+
+      if (!priceChart) {
+        priceContainer.innerHTML = '';
         var panel = document.createElement('div');
         panel.id = 'info-panel';
-        container.appendChild(panel);
+        priceContainer.appendChild(panel);
         $infoPanel = panel;
+
         if (typeof LightweightCharts === 'undefined') {
-          container.innerHTML = '<div class="loading">图表库加载失败，请检查网络</div>';
+          priceContainer.innerHTML = '<div class="loading">图表库加载失败，请检查网络</div>';
           return false;
         }
-        chart = LightweightCharts.createChart(container, {
-          layout: {
-            background: { type: 'solid', color: getComputedStyle(document.body).getPropertyValue('--vscode-editor-background').trim() },
-            textColor: getComputedStyle(document.body).getPropertyValue('--vscode-foreground').trim(),
-          },
-          grid: {
-            vertLines: { color: 'rgba(128,128,128,0.1)' },
-            horzLines: { color: 'rgba(128,128,128,0.1)' },
-          },
+
+        priceChart = LightweightCharts.createChart(priceContainer, {
+          layout: getLayoutOpts(),
+          grid: getGridOpts(),
           rightPriceScale: { borderColor: 'rgba(128,128,128,0.3)' },
           timeScale: { borderColor: 'rgba(128,128,128,0.3)', timeVisible: false, secondsVisible: false },
           crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        });
-        window.addEventListener('resize', () => {
-          if (chart) {
-            chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
-          }
-        });
-        chart.subscribeCrosshairMove(function(param) {
-          if (!param || !param.time || !param.seriesData || param.seriesData.size === 0) {
-            $infoPanel.style.display = 'none';
-            return;
-          }
-          var entry = null;
-          for (var pair of param.seriesData) {
-            entry = pair[1]; break;
-          }
-          if (!entry) { $infoPanel.style.display = 'none'; return; }
-          $infoPanel.style.display = 'block';
-          if (chartType === 'candlestick') {
-            var o = entry.open, h = entry.high, l = entry.low, c = entry.close;
-            var chg = o ? ((c - o) / o * 100) : 0;
-            var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
-            var sign = chg >= 0 ? '+' : '';
-            $infoPanel.innerHTML =
-              '<div><span class="label">开</span>' + o.toFixed(2) + '</div>' +
-              '<div><span class="label">高</span>' + h.toFixed(2) + '</div>' +
-              '<div><span class="label">低</span>' + l.toFixed(2) + '</div>' +
-              '<div><span class="label">收</span>' + c.toFixed(2) + '</div>' +
-              '<div><span class="label">幅</span><span class="' + cls + '">' + sign + chg.toFixed(2) + '%</span></div>';
-          } else {
-            var val = entry.value || entry.close;
-            var base = prevClose || (currentRawData.length > 0 ? currentRawData[0].value : val);
-            var chg = base ? ((val - base) / base * 100) : 0;
-            var chgAbs = val - base;
-            var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
-            var sign = chg >= 0 ? '+' : '';
-            $infoPanel.innerHTML =
-              '<div><span class="label">价</span>' + val.toFixed(2) + '</div>' +
-              '<div><span class="label">涨跌</span><span class="' + cls + '">' + sign + chgAbs.toFixed(2) + '</span></div>' +
-              '<div><span class="label">幅</span><span class="' + cls + '">' + sign + chg.toFixed(2) + '%</span></div>';
-          }
+          handleScroll: { vertTouchDrag: false },
         });
       }
+
+      if (!volChart) {
+        volContainer.innerHTML = '';
+        var label = document.createElement('span');
+        label.className = 'vol-label';
+        label.textContent = '成交量';
+        volContainer.appendChild(label);
+
+        volChart = LightweightCharts.createChart(volContainer, {
+          layout: getLayoutOpts(),
+          grid: getGridOpts(),
+          rightPriceScale: { borderColor: 'rgba(128,128,128,0.3)', scaleMargins: { top: 0.1, bottom: 0 } },
+          timeScale: { borderColor: 'rgba(128,128,128,0.3)', timeVisible: false, secondsVisible: false, visible: false },
+          crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+          handleScroll: { vertTouchDrag: false },
+        });
+
+        priceChart.timeScale().subscribeVisibleLogicalRangeChange(function(range) {
+          if (volChart) syncTimeScales(priceChart, volChart);
+        });
+        volChart.timeScale().subscribeVisibleLogicalRangeChange(function(range) {
+          if (priceChart) syncTimeScales(volChart, priceChart);
+        });
+      }
+
+      window.addEventListener('resize', function() {
+        if (priceChart) {
+          priceChart.applyOptions({ width: priceContainer.clientWidth, height: priceContainer.clientHeight });
+        }
+        if (volChart) {
+          volChart.applyOptions({ width: volContainer.clientWidth, height: volContainer.clientHeight });
+        }
+      });
+
+      priceChart.subscribeCrosshairMove(function(param) {
+        if (!param || !param.time || !param.seriesData || param.seriesData.size === 0) {
+          $infoPanel.style.display = 'none';
+          return;
+        }
+        var entry = null;
+        for (var pair of param.seriesData) {
+          entry = pair[1]; break;
+        }
+        if (!entry) { $infoPanel.style.display = 'none'; return; }
+        $infoPanel.style.display = 'block';
+
+        var volText = '';
+        if (param.seriesData.size > 1) {
+          for (var pair of param.seriesData) {
+            var v = pair[1];
+            if (v && v.value !== undefined && v !== entry) {
+              volText = '<div><span class="label">量</span>' + formatVolume(v.value) + '</div>';
+            }
+          }
+        } else {
+          var volVal = findVolumeForTime(param.time);
+          if (volVal !== null) {
+            volText = '<div><span class="label">量</span>' + formatVolume(volVal) + '</div>';
+          }
+        }
+
+        if (chartType === 'candlestick') {
+          var o = entry.open, h = entry.high, l = entry.low, c = entry.close;
+          var chg = o ? ((c - o) / o * 100) : 0;
+          var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+          var sign = chg >= 0 ? '+' : '';
+          $infoPanel.innerHTML =
+            '<div><span class="label">开</span>' + o.toFixed(2) + '</div>' +
+            '<div><span class="label">高</span>' + h.toFixed(2) + '</div>' +
+            '<div><span class="label">低</span>' + l.toFixed(2) + '</div>' +
+            '<div><span class="label">收</span>' + c.toFixed(2) + '</div>' +
+            '<div><span class="label">幅</span><span class="' + cls + '">' + sign + chg.toFixed(2) + '%</span></div>' +
+            volText;
+        } else {
+          var val = entry.value || entry.close;
+          var base = prevClose || (currentRawData.length > 0 ? currentRawData[0].value : val);
+          var chg = base ? ((val - base) / base * 100) : 0;
+          var chgAbs = val - base;
+          var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+          var sign = chg >= 0 ? '+' : '';
+          $infoPanel.innerHTML =
+            '<div><span class="label">价</span>' + val.toFixed(2) + '</div>' +
+            '<div><span class="label">涨跌</span><span class="' + cls + '">' + sign + chgAbs.toFixed(2) + '</span></div>' +
+            '<div><span class="label">幅</span><span class="' + cls + '">' + sign + chg.toFixed(2) + '%</span></div>' +
+            volText;
+        }
+      });
+
       return true;
     }
 
+    function formatVolume(v) {
+      if (v >= 100000000) return (v / 100000000).toFixed(2) + '亿';
+      if (v >= 10000) return (v / 10000).toFixed(1) + '万';
+      return String(Math.round(v));
+    }
+
+    function findVolumeForTime(time) {
+      for (var i = 0; i < currentRawData.length; i++) {
+        var d = currentRawData[i];
+        var t = null;
+        if (chartType === 'line') {
+          var dt = d.date;
+          if (dt instanceof Date) t = Math.floor(dt.getTime() / 1000);
+          else t = Math.floor(new Date(dt).getTime() / 1000);
+        } else {
+          var dt = d.date;
+          if (dt instanceof Date) {
+            t = dt.getFullYear() + '-' +
+              String(dt.getMonth() + 1).padStart(2, '0') + '-' +
+              String(dt.getDate()).padStart(2, '0');
+          } else {
+            var dd = new Date(dt);
+            t = dd.getFullYear() + '-' +
+              String(dd.getMonth() + 1).padStart(2, '0') + '-' +
+              String(dd.getDate()).padStart(2, '0');
+          }
+        }
+        if (t === time) return d.volume || 0;
+      }
+      return null;
+    }
+
     function setActiveBtn(id) {
-      document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
-      const el = document.getElementById('btn-' + id);
+      document.querySelectorAll('.toolbar button').forEach(function(b) { b.classList.remove('active'); });
+      var el = document.getElementById('btn-' + id);
       if (el) el.classList.add('active');
     }
 
     function renderCandlestick(data) {
-      if (!ensureChart()) return;
-      if (mainSeries) { chart.removeSeries(mainSeries); mainSeries = null; }
+      if (!ensureCharts()) return;
+      if (mainSeries) { priceChart.removeSeries(mainSeries); mainSeries = null; }
+      if (volumeSeries) { volChart.removeSeries(volumeSeries); volumeSeries = null; }
       chartType = 'candlestick';
       currentRawData = data;
-      chart.applyOptions({
+
+      priceChart.applyOptions({
         timeScale: {
           timeVisible: false,
           secondsVisible: false,
-          tickMarkFormatter: (time) => {
+          barSpacing: 3,
+          tickMarkFormatter: function(time) {
             if (typeof time === 'string') return time.slice(5);
             if (typeof time === 'object' && time !== null) {
               return String(time.month).padStart(2, '0') + '/' + String(time.day).padStart(2, '0');
@@ -229,7 +358,7 @@ class ChartViewProvider {
           },
         },
         localization: {
-          timeFormatter: (time) => {
+          timeFormatter: function(time) {
             if (typeof time === 'string') return time;
             if (typeof time === 'object' && time !== null) {
               return time.year + '-' + String(time.month).padStart(2, '0') + '-' + String(time.day).padStart(2, '0');
@@ -238,47 +367,69 @@ class ChartViewProvider {
           },
         },
       });
-      mainSeries = chart.addCandlestickSeries({
+
+      mainSeries = priceChart.addCandlestickSeries({
         upColor: '#ef4444', downColor: '#22c55e',
         borderUpColor: '#ef4444', borderDownColor: '#22c55e',
         wickUpColor: '#ef4444', wickDownColor: '#22c55e',
       });
-      const formatted = data.map(d => {
-        const dt = new Date(d.date);
-        const timeStr = dt.getFullYear() + '-' +
+
+      var formatted = data.map(function(d) {
+        var dt = new Date(d.date);
+        var timeStr = dt.getFullYear() + '-' +
           String(dt.getMonth() + 1).padStart(2, '0') + '-' +
           String(dt.getDate()).padStart(2, '0');
-        return {
-          time: timeStr,
-          open: d.open, high: d.high, low: d.low, close: d.close,
-        };
-      }).filter(d => d.open != null && d.open > 0);
+        return { time: timeStr, open: d.open, high: d.high, low: d.low, close: d.close };
+      }).filter(function(d) { return d.open != null && d.open > 0; });
       mainSeries.setData(formatted);
-      chart.timeScale().fitContent();
+
+      var volData = data.map(function(d) {
+        var dt = new Date(d.date);
+        var timeStr = dt.getFullYear() + '-' +
+          String(dt.getMonth() + 1).padStart(2, '0') + '-' +
+          String(dt.getDate()).padStart(2, '0');
+        var isUp = d.close >= d.open;
+        return { time: timeStr, value: d.volume || 0, color: isUp ? 'rgba(239,68,68,0.5)' : 'rgba(34,197,94,0.5)' };
+      }).filter(function(d) { return d.value > 0; });
+
+      volumeSeries = volChart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'vol',
+      });
+      volChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+      volChart.applyOptions({ timeScale: { barSpacing: 3 } });
+      volumeSeries.setData(volData);
+
+      priceChart.timeScale().fitContent();
+      volChart.timeScale().fitContent();
+      syncTimeScales(priceChart, volChart);
     }
 
     function renderLine(data, prevCloseVal) {
-      if (!ensureChart()) return;
-      if (mainSeries) { chart.removeSeries(mainSeries); mainSeries = null; }
+      if (!ensureCharts()) return;
+      if (mainSeries) { priceChart.removeSeries(mainSeries); mainSeries = null; }
+      if (volumeSeries) { volChart.removeSeries(volumeSeries); volumeSeries = null; }
       chartType = 'line';
       currentRawData = data;
       prevClose = prevCloseVal || 0;
-      chart.applyOptions({
+
+      priceChart.applyOptions({
         timeScale: {
           timeVisible: true,
           secondsVisible: false,
-          tickMarkFormatter: (time) => {
+          barSpacing: 2,
+          tickMarkFormatter: function(time) {
             if (typeof time === 'number') {
-              const d = new Date(time * 1000);
+              var d = new Date(time * 1000);
               return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
             }
             return '';
           },
         },
         localization: {
-          timeFormatter: (time) => {
+          timeFormatter: function(time) {
             if (typeof time === 'number') {
-              const d = new Date(time * 1000);
+              var d = new Date(time * 1000);
               return String(d.getMonth() + 1).padStart(2, '0') + '/' +
                 String(d.getDate()).padStart(2, '0') + ' ' +
                 String(d.getHours()).padStart(2, '0') + ':' +
@@ -288,24 +439,53 @@ class ChartViewProvider {
           },
         },
       });
-      mainSeries = chart.addLineSeries({
+
+      mainSeries = priceChart.addLineSeries({
         color: '#3b82f6', lineWidth: 2,
         lastValueVisible: true, priceLineVisible: true,
         baseValue: { type: 'price', price: prevClose || (data.length > 0 ? data[0].value : 0) },
       });
-      const formatted = data.map(d => {
-        const dt = new Date(d.date);
-        return {
-          time: Math.floor(dt.getTime() / 1000),
-          value: d.value,
-        };
-      }).filter(d => d.value != null && d.value > 0);
+
+      var formatted = data.map(function(d) {
+        var dt = new Date(d.date);
+        return { time: Math.floor(dt.getTime() / 1000), value: d.value };
+      }).filter(function(d) { return d.value != null && d.value > 0; });
       mainSeries.setData(formatted);
-      chart.timeScale().fitContent();
+
+      var basePrice = prevClose || (data.length > 0 ? data[0].value : 0);
+      var volData = [];
+      var prevVol = 0;
+      var prevVal = basePrice;
+      for (var i = 0; i < data.length; i++) {
+        var d = data[i];
+        var cumVol = d.volume || 0;
+        var incVol = i === 0 ? cumVol : cumVol - prevVol;
+        if (incVol < 0) incVol = cumVol;
+        prevVol = cumVol;
+        var dt = new Date(d.date);
+        var ts = Math.floor(dt.getTime() / 1000);
+        var isUp = d.value >= prevVal;
+        prevVal = d.value;
+        if (incVol > 0) {
+          volData.push({ time: ts, value: incVol, color: isUp ? 'rgba(239,68,68,0.5)' : 'rgba(34,197,94,0.5)' });
+        }
+      }
+
+      volumeSeries = volChart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'vol',
+      });
+      volChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
+      volChart.applyOptions({ timeScale: { barSpacing: 2 } });
+      volumeSeries.setData(volData);
+
+      priceChart.timeScale().fitContent();
+      volChart.timeScale().fitContent();
+      syncTimeScales(priceChart, volChart);
     }
 
-    window.addEventListener('message', event => {
-      const msg = event.data;
+    window.addEventListener('message', function(event) {
+      var msg = event.data;
       document.getElementById('stock-title').textContent = msg.title || '';
 
       if (msg.type === 'candlestick') {
@@ -313,22 +493,24 @@ class ChartViewProvider {
       } else if (msg.type === 'line') {
         renderLine(msg.data, msg.prevClose);
       } else if (msg.type === 'error') {
-        document.getElementById('chart-container').innerHTML =
+        document.getElementById('price-container').innerHTML =
           '<div class="loading">加载失败: ' + (msg.message || '未知错误') + '</div>';
-        chart = null;
+        priceChart = null;
         mainSeries = null;
+        volChart = null;
+        volumeSeries = null;
       } else if (msg.type === 'bossMode') {
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });
 
-    document.querySelectorAll('.toolbar button[id^="btn-"]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const action = btn.id.replace('btn-', '');
+    document.querySelectorAll('.toolbar button[id^="btn-"]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var action = btn.id.replace('btn-', '');
         if (action === 'kline') { setActiveBtn('kline'); }
         else if (action === 'intraday') { setActiveBtn('intraday'); }
         else if (action.startsWith('d')) { setActiveBtn('kline'); setActiveBtn(action); }
-        vscode.postMessage({ action });
+        vscode.postMessage({ action: action });
       });
     });
   </script>

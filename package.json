@@ -44,7 +44,11 @@
     "onCommand:cyberMonopoly.toggleStatusBar",
     "onCommand:cyberMonopoly.openSettings",
     "onCommand:cyberMonopoly.openNewsDetail",
-    "onCommand:cyberMonopoly.toggleBossKey"
+    "onCommand:cyberMonopoly.toggleBossKey",
+    "onCommand:cyberMonopoly.openStockNews",
+    "onCommand:cyberMonopoly.openStockReport",
+    "onCommand:cyberMonopoly.openStockFinance",
+    "onCommand:cyberMonopoly.addHotToWatchlist"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -112,6 +116,27 @@
         "title": "老板键 (切换隐蔽模式)",
         "category": "赛博大富翁",
         "icon": "$(eye-closed)"
+      },
+      {
+        "command": "cyberMonopoly.openStockNews",
+        "title": "查看个股资讯",
+        "category": "赛博大富翁"
+      },
+      {
+        "command": "cyberMonopoly.openStockReport",
+        "title": "查看研报评级",
+        "category": "赛博大富翁"
+      },
+      {
+        "command": "cyberMonopoly.openStockFinance",
+        "title": "查看财务数据",
+        "category": "赛博大富翁"
+      },
+      {
+        "command": "cyberMonopoly.addHotToWatchlist",
+        "title": "加入自选股",
+        "category": "赛博大富翁",
+        "icon": "$(add)"
       }
     ],
     "keybindings": [
@@ -169,6 +194,46 @@
           "command": "cyberMonopoly.removeFromWatchlist",
           "when": "view == cyberMonopolyWatchlist && viewItem == stock",
           "group": "inline"
+        },
+        {
+          "command": "cyberMonopoly.openStockNews",
+          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
+          "group": "detail"
+        },
+        {
+          "command": "cyberMonopoly.openStockReport",
+          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
+          "group": "detail"
+        },
+        {
+          "command": "cyberMonopoly.openStockFinance",
+          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
+          "group": "detail"
+        },
+        {
+          "command": "cyberMonopoly.openChart",
+          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "group": "inline"
+        },
+        {
+          "command": "cyberMonopoly.addHotToWatchlist",
+          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "group": "inline"
+        },
+        {
+          "command": "cyberMonopoly.openStockNews",
+          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "group": "detail"
+        },
+        {
+          "command": "cyberMonopoly.openStockReport",
+          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "group": "detail"
+        },
+        {
+          "command": "cyberMonopoly.openStockFinance",
+          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "group": "detail"
         }
       ]
     },

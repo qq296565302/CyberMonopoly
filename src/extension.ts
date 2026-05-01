@@ -8,6 +8,7 @@ import { ChartViewProvider } from './webview/chartPanel';
 import { AiChatPanel } from './webview/aiChatPanel';
 import { OverviewPanel } from './webview/overviewPanel';
 import { SettingsPanel } from './webview/settingsPanel';
+import { StockDetailPanel } from './webview/stockDetailPanel';
 import { LlmClient } from './chat/llmClient';
 import { registerWatchlistCommands } from './commands/watchlist';
 import { registerNewsCommands } from './commands/news';
@@ -26,6 +27,7 @@ let newsProviderRef: NewsViewProvider;
 let overviewPanelRef: OverviewPanel;
 let settingsPanelRef: SettingsPanel;
 let aiChatPanelRef: AiChatPanel;
+let stockDetailPanelRef: StockDetailPanel;
 
 export async function activate(context: vscode.ExtensionContext) {
   isActivated = true;
@@ -48,10 +50,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const chartViewProvider = new ChartViewProvider(context);
   const overviewPanel = new OverviewPanel(watchlistProvider);
   const settingsPanel = new SettingsPanel();
+  const stockDetailPanel = new StockDetailPanel();
   chartViewProviderRef = chartViewProvider;
   newsProviderRef = newsProvider;
   overviewPanelRef = overviewPanel;
   settingsPanelRef = settingsPanel;
+  stockDetailPanelRef = stockDetailPanel;
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -79,7 +83,7 @@ export async function activate(context: vscode.ExtensionContext) {
   alertManager = new AlertManager(context.globalState);
 
   context.subscriptions.push(
-    ...registerWatchlistCommands(context, watchlistProvider, chartViewProvider),
+    ...registerWatchlistCommands(context, watchlistProvider, chartViewProvider, stockDetailPanel),
     ...registerNewsCommands(context, newsProvider),
     ...registerAiCommands(context, llm, aiChatPanel),
     ...registerSettingsCommands(context, settingsPanel),
@@ -164,6 +168,7 @@ function applyBossMode(saturation: number): void {
   overviewPanelRef?.setBossMode(bossMode, saturation);
   settingsPanelRef?.setBossMode(bossMode, saturation);
   aiChatPanelRef?.setBossMode(bossMode, saturation);
+  stockDetailPanelRef?.setBossMode(bossMode, saturation);
 }
 
 function startAutoRefresh(): void {
