@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { WatchlistProvider } from '../provider/watchlistProvider';
-import { ChartPanel } from '../webview/chartPanel';
+import { ChartViewProvider } from '../webview/chartPanel';
 
 export function registerWatchlistCommands(
   context: vscode.ExtensionContext,
   provider: WatchlistProvider,
-  chartPanel: ChartPanel
+  chartView: ChartViewProvider
 ): vscode.Disposable[] {
   const disposables: vscode.Disposable[] = [];
 
@@ -56,7 +56,20 @@ export function registerWatchlistCommands(
           return;
         }
       }
-      await chartPanel.show(code, name || '未知', context);
+      await chartView.show(code, name || '未知');
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand('cyberMonopoly.sortWatchlist', async () => {
+      const items = [
+        { label: '按涨跌幅排序 (高→低)', value: 'percent-desc' },
+        { label: '按涨跌幅排序 (低→高)', value: 'percent-asc' },
+        { label: '按添加时间排序', value: 'time-asc' },
+      ];
+      const picked = await vscode.window.showQuickPick(items, { placeHolder: '选择排序方式' });
+      if (!picked) return;
+      provider.sortStocks(picked.value);
     })
   );
 

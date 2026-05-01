@@ -33,58 +33,82 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ChartPanel = void 0;
+exports.ChartViewProvider = void 0;
 const vscode = __importStar(require("vscode"));
+const path = __importStar(require("path"));
 const sina_1 = require("../api/sina");
-class ChartPanel {
-    constructor() {
+function getNonce() {
+    let text = '';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) {
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return text;
+}
+class ChartViewProvider {
+    constructor(context) {
+        this.context = context;
         this.currentCode = '';
         this.currentName = '';
         this.isCandlestick = true;
         this.currentDays = 30;
+        this.bossEnabled = false;
+        this.bossSaturation = 10;
     }
-    async show(code, name, context) {
-        if (this.panel) {
-            this.panel.reveal(vscode.ViewColumn.Beside);
-            this.currentCode = code;
-            this.currentName = name;
-            this.panel.title = `${name} (${code})`;
-            await this.loadKline(this.currentDays);
-            return;
+    resolveWebviewView(webviewView, _context, _token) {
+        this.view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'assets'))],
+        };
+        webviewView.webview.html = this.getWebviewContent(webviewView.webview);
+        this.setupMessageHandler();
+        if (this.bossEnabled) {
+            this.view.webview.postMessage({ type: 'bossMode', enabled: true, saturation: this.bossSaturation });
         }
+    }
+    async show(code, name) {
         this.currentCode = code;
         this.currentName = name;
-        this.panel = vscode.window.createWebviewPanel('cyberMonopolyChart', `${name} (${code})`, vscode.ViewColumn.Beside, {
-            enableScripts: true,
-            retainContextWhenHidden: true,
-        });
-        this.panel.onDidDispose(() => {
-            this.panel = undefined;
-        });
-        this.panel.webview.html = this.getWebviewContent(context);
-        this.setupMessageHandler();
-        this.loadKline(30);
+        if (this.view) {
+            this.view.title = `${name} (${code})`;
+            this.view.show(true);
+            await this.loadKline(this.currentDays);
+        }
     }
-    getWebviewContent(_context) {
+    getWebviewContent(webview) {
+        const nonce = getNonce();
+        const scriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(this.context.extensionPath, 'assets', 'lightweight-charts.standalone.production.js')));
         return /*html*/ `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' ${webview.cspSource}; style-src 'unsafe-inline';">
   <style>
-    body { margin: 0; padding: 0; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
-    .toolbar { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); align-items: center; flex-wrap: wrap; }
+    html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
+    .toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); align-items: center; flex-wrap: wrap; }
     .toolbar button {
       background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-      border: none; padding: 4px 10px; cursor: pointer; border-radius: 2px; font-size: 12px; opacity: 0.8;
+      border: none; padding: 3px 8px; cursor: pointer; border-radius: 2px; font-size: 11px; opacity: 0.8;
     }
     .toolbar button:hover { opacity: 1; }
     .toolbar button.active { opacity: 1; outline: 1px solid var(--vscode-focusBorder); }
-    .toolbar .title { flex: 1; font-weight: bold; font-size: 14px; min-width: 120px; }
-    .toolbar .sep { width: 1px; height: 16px; background: var(--vscode-panel-border); }
-    #chart-container { height: calc(100vh - 44px); width: 100%; }
-    .loading { display: flex; justify-content: center; align-items: center; height: 300px; color: var(--vscode-descriptionForeground); }
+    .toolbar .title { flex: 1; font-weight: bold; font-size: 13px; min-width: 100px; }
+    .toolbar .sep { width: 1px; height: 14px; background: var(--vscode-panel-border); }
+    #chart-container { height: calc(100% - 36px); width: 100%; position: relative; }
+    .loading { display: flex; justify-content: center; align-items: center; height: 200px; color: var(--vscode-descriptionForeground); }
+    #info-panel {
+      position: absolute; top: 8px; left: 10px; z-index: 10;
+      font-size: 11px; line-height: 1.7; pointer-events: none;
+      background: rgba(0,0,0,0.6); color: #fff; padding: 6px 10px; border-radius: 4px;
+      display: none; min-width: 160px;
+    }
+    #info-panel .label { color: #aaa; margin-right: 4px; }
+    #info-panel .up { color: #ef4444; }
+    #info-panel .down { color: #22c55e; }
+    #info-panel .flat { color: #aaa; }
   </style>
 </head>
 <body>
@@ -100,19 +124,26 @@ class ChartPanel {
     <span class="sep"></span>
     <button id="btn-refresh">↻ 刷新</button>
   </div>
-  <div id="chart-container"><div class="loading">加载中...</div></div>
+  <div id="chart-container"><div class="loading">加载中...</div><div id="info-panel"></div></div>
 
-  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
-  <script>
+  <script src="${scriptUri}"></script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     let chart = null;
     let mainSeries = null;
     let chartType = 'candlestick';
+    let currentRawData = [];
+    let prevClose = 0;
+    let $infoPanel = document.getElementById('info-panel');
 
     function ensureChart() {
       const container = document.getElementById('chart-container');
       if (!chart) {
         container.innerHTML = '';
+        var panel = document.createElement('div');
+        panel.id = 'info-panel';
+        container.appendChild(panel);
+        $infoPanel = panel;
         if (typeof LightweightCharts === 'undefined') {
           container.innerHTML = '<div class="loading">图表库加载失败，请检查网络</div>';
           return false;
@@ -127,12 +158,47 @@ class ChartPanel {
             horzLines: { color: 'rgba(128,128,128,0.1)' },
           },
           rightPriceScale: { borderColor: 'rgba(128,128,128,0.3)' },
-          timeScale: { borderColor: 'rgba(128,128,128,0.3)', timeVisible: true },
+          timeScale: { borderColor: 'rgba(128,128,128,0.3)', timeVisible: false, secondsVisible: false },
           crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
         });
         window.addEventListener('resize', () => {
           if (chart) {
             chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+          }
+        });
+        chart.subscribeCrosshairMove(function(param) {
+          if (!param || !param.time || !param.seriesData || param.seriesData.size === 0) {
+            $infoPanel.style.display = 'none';
+            return;
+          }
+          var entry = null;
+          for (var pair of param.seriesData) {
+            entry = pair[1]; break;
+          }
+          if (!entry) { $infoPanel.style.display = 'none'; return; }
+          $infoPanel.style.display = 'block';
+          if (chartType === 'candlestick') {
+            var o = entry.open, h = entry.high, l = entry.low, c = entry.close;
+            var chg = o ? ((c - o) / o * 100) : 0;
+            var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+            var sign = chg >= 0 ? '+' : '';
+            $infoPanel.innerHTML =
+              '<div><span class="label">开</span>' + o.toFixed(2) + '</div>' +
+              '<div><span class="label">高</span>' + h.toFixed(2) + '</div>' +
+              '<div><span class="label">低</span>' + l.toFixed(2) + '</div>' +
+              '<div><span class="label">收</span>' + c.toFixed(2) + '</div>' +
+              '<div><span class="label">幅</span><span class="' + cls + '">' + sign + chg.toFixed(2) + '%</span></div>';
+          } else {
+            var val = entry.value || entry.close;
+            var base = prevClose || (currentRawData.length > 0 ? currentRawData[0].value : val);
+            var chg = base ? ((val - base) / base * 100) : 0;
+            var chgAbs = val - base;
+            var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+            var sign = chg >= 0 ? '+' : '';
+            $infoPanel.innerHTML =
+              '<div><span class="label">价</span>' + val.toFixed(2) + '</div>' +
+              '<div><span class="label">涨跌</span><span class="' + cls + '">' + sign + chgAbs.toFixed(2) + '</span></div>' +
+              '<div><span class="label">幅</span><span class="' + cls + '">' + sign + chg.toFixed(2) + '%</span></div>';
           }
         });
       }
@@ -149,6 +215,29 @@ class ChartPanel {
       if (!ensureChart()) return;
       if (mainSeries) { chart.removeSeries(mainSeries); mainSeries = null; }
       chartType = 'candlestick';
+      currentRawData = data;
+      chart.applyOptions({
+        timeScale: {
+          timeVisible: false,
+          secondsVisible: false,
+          tickMarkFormatter: (time) => {
+            if (typeof time === 'string') return time.slice(5);
+            if (typeof time === 'object' && time !== null) {
+              return String(time.month).padStart(2, '0') + '/' + String(time.day).padStart(2, '0');
+            }
+            return '';
+          },
+        },
+        localization: {
+          timeFormatter: (time) => {
+            if (typeof time === 'string') return time;
+            if (typeof time === 'object' && time !== null) {
+              return time.year + '-' + String(time.month).padStart(2, '0') + '-' + String(time.day).padStart(2, '0');
+            }
+            return String(time);
+          },
+        },
+      });
       mainSeries = chart.addCandlestickSeries({
         upColor: '#ef4444', downColor: '#22c55e',
         borderUpColor: '#ef4444', borderDownColor: '#22c55e',
@@ -168,10 +257,37 @@ class ChartPanel {
       chart.timeScale().fitContent();
     }
 
-    function renderLine(data, prevClose) {
+    function renderLine(data, prevCloseVal) {
       if (!ensureChart()) return;
       if (mainSeries) { chart.removeSeries(mainSeries); mainSeries = null; }
       chartType = 'line';
+      currentRawData = data;
+      prevClose = prevCloseVal || 0;
+      chart.applyOptions({
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          tickMarkFormatter: (time) => {
+            if (typeof time === 'number') {
+              const d = new Date(time * 1000);
+              return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+            }
+            return '';
+          },
+        },
+        localization: {
+          timeFormatter: (time) => {
+            if (typeof time === 'number') {
+              const d = new Date(time * 1000);
+              return String(d.getMonth() + 1).padStart(2, '0') + '/' +
+                String(d.getDate()).padStart(2, '0') + ' ' +
+                String(d.getHours()).padStart(2, '0') + ':' +
+                String(d.getMinutes()).padStart(2, '0');
+            }
+            return String(time);
+          },
+        },
+      });
       mainSeries = chart.addLineSeries({
         color: '#3b82f6', lineWidth: 2,
         lastValueVisible: true, priceLineVisible: true,
@@ -201,15 +317,17 @@ class ChartPanel {
           '<div class="loading">加载失败: ' + (msg.message || '未知错误') + '</div>';
         chart = null;
         mainSeries = null;
+      } else if (msg.type === 'bossMode') {
+        document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });
 
     document.querySelectorAll('.toolbar button[id^="btn-"]').forEach(btn => {
       btn.addEventListener('click', () => {
         const action = btn.id.replace('btn-', '');
-        if (action === 'kline') { setActiveBtn('kline'); setActiveBtn('d30'); }
+        if (action === 'kline') { setActiveBtn('kline'); }
         else if (action === 'intraday') { setActiveBtn('intraday'); }
-        else if (action.startsWith('d')) { setActiveBtn(action); }
+        else if (action.startsWith('d')) { setActiveBtn('kline'); setActiveBtn(action); }
         vscode.postMessage({ action });
       });
     });
@@ -218,12 +336,13 @@ class ChartPanel {
 </html>`;
     }
     setupMessageHandler() {
-        this.panel.webview.onDidReceiveMessage(async (msg) => {
+        if (!this.view)
+            return;
+        this.view.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.action) {
                 case 'kline':
                     this.isCandlestick = true;
-                    this.currentDays = 30;
-                    await this.loadKline(30);
+                    await this.loadKline(this.currentDays);
                     break;
                 case 'intraday':
                     this.isCandlestick = false;
@@ -231,23 +350,23 @@ class ChartPanel {
                     break;
                 case 'd15':
                     this.currentDays = 15;
-                    if (this.isCandlestick)
-                        await this.loadKline(15);
+                    this.isCandlestick = true;
+                    await this.loadKline(15);
                     break;
                 case 'd30':
                     this.currentDays = 30;
-                    if (this.isCandlestick)
-                        await this.loadKline(30);
+                    this.isCandlestick = true;
+                    await this.loadKline(30);
                     break;
                 case 'd60':
                     this.currentDays = 60;
-                    if (this.isCandlestick)
-                        await this.loadKline(60);
+                    this.isCandlestick = true;
+                    await this.loadKline(60);
                     break;
                 case 'd120':
                     this.currentDays = 120;
-                    if (this.isCandlestick)
-                        await this.loadKline(120);
+                    this.isCandlestick = true;
+                    await this.loadKline(120);
                     break;
                 case 'refresh':
                     if (this.isCandlestick)
@@ -261,22 +380,26 @@ class ChartPanel {
         });
     }
     async loadKline(days) {
+        if (!this.view)
+            return;
         try {
             const series = await (0, sina_1.getKlineData)(this.currentCode, days);
-            this.panel.webview.postMessage({
+            this.view.webview.postMessage({
                 type: 'candlestick',
                 data: series.data,
                 title: `${series.name} (${this.currentCode})`,
             });
         }
         catch (e) {
-            this.panel.webview.postMessage({ type: 'error', message: String(e) });
+            this.view.webview.postMessage({ type: 'error', message: String(e) });
         }
     }
     async loadIntraday() {
+        if (!this.view)
+            return;
         try {
             const series = await (0, sina_1.getIntradayData)(this.currentCode);
-            this.panel.webview.postMessage({
+            this.view.webview.postMessage({
                 type: 'line',
                 data: series.data,
                 prevClose: series.prevClose,
@@ -284,9 +407,16 @@ class ChartPanel {
             });
         }
         catch (e) {
-            this.panel.webview.postMessage({ type: 'error', message: String(e) });
+            this.view.webview.postMessage({ type: 'error', message: String(e) });
+        }
+    }
+    setBossMode(enabled, saturation) {
+        this.bossEnabled = enabled;
+        this.bossSaturation = saturation;
+        if (this.view) {
+            this.view.webview.postMessage({ type: 'bossMode', enabled, saturation });
         }
     }
 }
-exports.ChartPanel = ChartPanel;
+exports.ChartViewProvider = ChartViewProvider;
 //# sourceMappingURL=chartPanel.js.map

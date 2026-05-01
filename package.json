@@ -4,8 +4,34 @@
   "description": "A-share market tool hidden in your editor. Perfect for... coding.",
   "version": "1.0.0",
   "publisher": "cyber-monopoly",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "stock",
+    "A股",
+    "finance",
+    "kline",
+    "watchlist",
+    "赛博大富翁"
+  ],
+  "icon": "assets/icon-128.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/cyber-monopoly"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/your-username/cyber-monopoly#readme",
+  "bugs": {
+    "url": "https://github.com/your-username/cyber-monopoly/issues"
+  },
   "activationEvents": [
     "onView:cyberMonopolyWatchlist",
     "onView:cyberMonopolyNews",
@@ -17,7 +43,8 @@
     "onCommand:cyberMonopoly.refreshNews",
     "onCommand:cyberMonopoly.toggleStatusBar",
     "onCommand:cyberMonopoly.openSettings",
-    "onCommand:cyberMonopoly.openNewsDetail"
+    "onCommand:cyberMonopoly.openNewsDetail",
+    "onCommand:cyberMonopoly.toggleBossKey"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -73,6 +100,18 @@
         "command": "cyberMonopoly.toggleStatusBar",
         "title": "切换状态栏行情",
         "category": "赛博大富翁"
+      },
+      {
+        "command": "cyberMonopoly.sortWatchlist",
+        "title": "排序自选股...",
+        "category": "赛博大富翁",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "cyberMonopoly.toggleBossKey",
+        "title": "老板键 (切换隐蔽模式)",
+        "category": "赛博大富翁",
+        "icon": "$(eye-closed)"
       }
     ],
     "keybindings": [
@@ -90,6 +129,11 @@
         "command": "cyberMonopoly.refreshQuotes",
         "key": "f5",
         "when": "cyberMonopoly:focus"
+      },
+      {
+        "command": "cyberMonopoly.toggleBossKey",
+        "key": "alt+shift+b",
+        "mac": "alt+shift+b"
       }
     ],
     "menus": {
@@ -101,6 +145,11 @@
         },
         {
           "command": "cyberMonopoly.addToWatchlist",
+          "when": "view == cyberMonopolyWatchlist",
+          "group": "navigation"
+        },
+        {
+          "command": "cyberMonopoly.sortWatchlist",
           "when": "view == cyberMonopolyWatchlist",
           "group": "navigation"
         },
@@ -142,6 +191,11 @@
           "id": "cyberMonopolyNews",
           "name": "快讯",
           "type": "webview"
+        },
+        {
+          "id": "cyberMonopolyChart",
+          "name": "K线图",
+          "type": "webview"
         }
       ]
     },
@@ -165,6 +219,13 @@
           "default": true,
           "description": "是否启用价格异动提醒"
         },
+        "cyberMonopoly.defaultAlertPercent": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "默认涨跌幅异动提醒阈值 (%)"
+        },
         "cyberMonopoly.llmBaseUrl": {
           "type": "string",
           "default": "",
@@ -182,9 +243,32 @@
         },
         "cyberMonopoly.colorTheme": {
           "type": "string",
-          "enum": ["a-stock", "us-stock", "custom"],
+          "enum": [
+            "a-stock",
+            "us-stock",
+            "custom"
+          ],
           "default": "a-stock",
           "description": "涨跌颜色主题"
+        },
+        "cyberMonopoly.chartFontSize": {
+          "type": "number",
+          "default": 14,
+          "minimum": 8,
+          "maximum": 24,
+          "description": "界面字体大小 (px)"
+        },
+        "cyberMonopoly.bossKeyEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用老板键 (Ctrl+Shift+B 切换隐蔽模式)"
+        },
+        "cyberMonopoly.bossKeySaturation": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "老板键激活时饱和度 (%)"
         }
       }
     }
@@ -201,12 +285,13 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
-    "eslint": "^8.56.0",
-    "typescript": "^5.3.3",
     "@vscode/test-cli": "^0.0.6",
-    "@vscode/test-electron": "^2.3.9"
+    "@vscode/test-electron": "^2.3.9",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
   },
   "dependencies": {
-    "iconv-lite": "^0.6.3"
+    "iconv-lite": "^0.6.3",
+    "lightweight-charts": "^4.1.0"
   }
 }

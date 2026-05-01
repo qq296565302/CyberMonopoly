@@ -34,7 +34,7 @@ export class StockTicker {
     this.updateDisplay();
     this.intervalId = setInterval(() => {
       this.updateDisplay();
-    }, 3000);
+    }, 5000);
   }
 
   private updateDisplay() {

@@ -21,14 +21,20 @@ export class AlertManager {
   }
 
   addRule(stock: WatchStock): void {
-    if (stock.alertPrice || stock.alertPercent) {
+    const config = vscode.workspace.getConfiguration('cyberMonopoly');
+    const defaultPercent = config.get<number>('defaultAlertPercent', 5);
+    const alertPrice = stock.alertPrice;
+    const alertPercent = stock.alertPercent || defaultPercent;
+
+    if (alertPrice || alertPercent) {
       const saved = this.state.get<Record<string, number>>(this.STORAGE_KEY, {});
+      const existing = this.rules.get(stock.code);
       this.rules.set(stock.code, {
         code: stock.code,
         name: stock.name,
-        alertPrice: stock.alertPrice,
-        alertPercent: stock.alertPercent,
-        lastAlertTime: saved[stock.code] || 0,
+        alertPrice,
+        alertPercent,
+        lastAlertTime: existing?.lastAlertTime || saved[stock.code] || 0,
       });
     }
   }

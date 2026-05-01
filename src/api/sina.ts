@@ -30,7 +30,15 @@ export interface RealtimeQuote {
   time: string;
 }
 
-function fetchWithReferer(url: string): Promise<Buffer> {
+const requestCache = new Map<string, { data: Buffer; time: number }>();
+const CACHE_TTL = 3000;
+
+function fetchWithReferer(url: string, timeoutMs = 10000): Promise<Buffer> {
+  const cached = requestCache.get(url);
+  if (cached && Date.now() - cached.time < CACHE_TTL) {
+    return Promise.resolve(cached.data);
+  }
+
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
@@ -38,12 +46,26 @@ function fetchWithReferer(url: string): Promise<Buffer> {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
       }
     };
-    
-    https.get(url, options, (res) => {
+
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error(`请求超时 (${timeoutMs}ms): ${url}`));
+    }, timeoutMs);
+
+    const req = https.get(url, options, (res) => {
       const chunks: Buffer[] = [];
       res.on('data', chunk => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-    }).on('error', reject);
+      res.on('end', () => {
+        clearTimeout(timer);
+        const data = Buffer.concat(chunks);
+        requestCache.set(url, { data, time: Date.now() });
+        resolve(data);
+      });
+    });
+    req.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -144,10 +166,28 @@ export async function getIntradayData(code: string): Promise<DataSeries> {
 
   const data = JSON.parse(text);
   const stockData = data.data?.[tencentCode] || data.data;
-  const prevClose = stockData?.info?.prevclose || data.data?.info?.prevclose || 0;
+  let prevClose = stockData?.info?.prevclose || data.data?.info?.prevclose || 0;
   const name = stockData?.info?.name || data.data?.info?.name || code;
 
+  try {
+    const quote = await getRealtimeQuote(code);
+    if (quote.prevClose > 0) {
+      prevClose = quote.prevClose;
+    }
+    if (!name || name === code) {
+      (stockData as any)._name = quote.name;
+    }
+  } catch {}
+
   const minuteData: string[] = stockData?.data?.data || [];
+
+  let tradingDate = stockData?.data?.date || '';
+  if (/^\d{8}$/.test(tradingDate)) {
+    tradingDate = `${tradingDate.slice(0, 4)}-${tradingDate.slice(4, 6)}-${tradingDate.slice(6, 8)}`;
+  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(tradingDate)) {
+    const d = new Date();
+    tradingDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
 
   const points: DataPoint[] = Array.isArray(minuteData) ? minuteData.map((item: string) => {
     const parts = item.split(' ');
@@ -156,7 +196,7 @@ export async function getIntradayData(code: string): Promise<DataSeries> {
     const volume = parseFloat(parts[2]) || 0;
     const hour = timeStr.substring(0, 2);
     const minute = timeStr.substring(2, 4);
-    const dateStr = `2025-01-01T${hour}:${minute}:00.000Z`;
+    const dateStr = `${tradingDate}T${hour}:${minute}:00`;
     return {
       date: new Date(dateStr),
       value: price,

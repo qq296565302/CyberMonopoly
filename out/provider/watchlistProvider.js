@@ -54,30 +54,36 @@ class StockTreeItem extends vscode.TreeItem {
     }
     getIcon() {
         if (!this.quote)
-            return new vscode.ThemeIcon('circle-outline');
+            return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('charts.lines'));
         if (this.quote.changePercent > 0)
-            return new vscode.ThemeIcon('arrow-up');
+            return new vscode.ThemeIcon('arrow-up', new vscode.ThemeColor('charts.red'));
         if (this.quote.changePercent < 0)
-            return new vscode.ThemeIcon('arrow-down');
-        return new vscode.ThemeIcon('minus');
+            return new vscode.ThemeIcon('arrow-down', new vscode.ThemeColor('charts.green'));
+        return new vscode.ThemeIcon('dash', new vscode.ThemeColor('charts.yellow'));
     }
     buildTooltip() {
         if (!this.quote)
             return new vscode.MarkdownString('加载中...');
         const sign = this.quote.changePercent >= 0 ? '+' : '';
-        return new vscode.MarkdownString(`
-**${this.quote.name}** (${this.quote.code})
----
-当前价: **${this.quote.price.toFixed(2)}**
-今开: ${this.quote.open.toFixed(2)}
-最高: ${this.quote.high.toFixed(2)}
-最低: ${this.quote.low.toFixed(2)}
-昨收: ${this.quote.prevClose.toFixed(2)}
-涨跌幅: ${sign}${this.quote.changePercent.toFixed(2)}%
-涨跌额: ${sign}${this.quote.changeAmount.toFixed(2)}
-成交量: ${(this.quote.volume / 10000).toFixed(0)}万手
-时间: ${this.quote.date} ${this.quote.time}
-    `.trim());
+        const emoji = this.quote.changePercent > 0 ? '📈' : this.quote.changePercent < 0 ? '📉' : '➡️';
+        const tooltip = new vscode.MarkdownString('', true);
+        tooltip.isTrusted = true;
+        tooltip.value = [
+            `${emoji} **${this.quote.name}** (${this.quote.code})`,
+            `---`,
+            `| | |`,
+            `|---|---|`,
+            `| 当前价 | **${this.quote.price.toFixed(2)}** |`,
+            `| 涨跌幅 | ${sign}${this.quote.changePercent.toFixed(2)}% |`,
+            `| 涨跌额 | ${sign}${this.quote.changeAmount.toFixed(2)} |`,
+            `| 今开 | ${this.quote.open.toFixed(2)} |`,
+            `| 最高 | ${this.quote.high.toFixed(2)} |`,
+            `| 最低 | ${this.quote.low.toFixed(2)} |`,
+            `| 昨收 | ${this.quote.prevClose.toFixed(2)} |`,
+            `| 成交量 | ${(this.quote.volume / 10000).toFixed(0)}万手 |`,
+            `| 时间 | ${this.quote.date} ${this.quote.time} |`,
+        ].join('\n');
+        return tooltip;
     }
 }
 exports.StockTreeItem = StockTreeItem;
@@ -155,6 +161,27 @@ class WatchlistProvider {
         this.stocks = this.stocks.filter(s => s.code !== code);
         this.state.saveWatchlist(this.stocks);
         this.quotes.delete(code);
+        this._onDidChangeTreeData.fire(undefined);
+    }
+    sortStocks(mode) {
+        if (mode === 'percent-desc') {
+            this.stocks.sort((a, b) => {
+                const pa = this.quotes.get(a.code)?.changePercent ?? -Infinity;
+                const pb = this.quotes.get(b.code)?.changePercent ?? -Infinity;
+                return pb - pa;
+            });
+        }
+        else if (mode === 'percent-asc') {
+            this.stocks.sort((a, b) => {
+                const pa = this.quotes.get(a.code)?.changePercent ?? Infinity;
+                const pb = this.quotes.get(b.code)?.changePercent ?? Infinity;
+                return pa - pb;
+            });
+        }
+        else {
+            this.stocks.sort((a, b) => a.addedAt - b.addedAt);
+        }
+        this.state.saveWatchlist(this.stocks);
         this._onDidChangeTreeData.fire(undefined);
     }
 }

@@ -3,8 +3,17 @@ import { WatchlistProvider } from '../provider/watchlistProvider';
 
 export class OverviewPanel {
   private panel: vscode.WebviewPanel | undefined;
+  private refreshListener: vscode.Disposable | undefined;
 
-  constructor(private provider: WatchlistProvider) {}
+  constructor(private provider: WatchlistProvider) {
+    this.refreshListener = provider.onDidChangeTreeData(() => {
+      this.refreshContent();
+    });
+  }
+
+  dispose() {
+    this.refreshListener?.dispose();
+  }
 
   show(context: vscode.ExtensionContext) {
     if (this.panel) {
@@ -35,6 +44,7 @@ export class OverviewPanel {
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <style>
     body { margin: 0; padding: 16px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
     h2 { margin: 0 0 12px 0; font-size: 16px; }
@@ -52,6 +62,7 @@ export class OverviewPanel {
   <div id="content"><div class="loading">加载中...</div></div>
   <script>
     const vscode = acquireVsCodeApi();
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     window.addEventListener('message', event => {
       const msg = event.data;
       if (msg.type === 'quotes') {
@@ -60,8 +71,8 @@ export class OverviewPanel {
           const cls = q.changePercent > 0 ? 'up' : q.changePercent < 0 ? 'down' : 'flat';
           const sign = q.changePercent >= 0 ? '+' : '';
           html += '<tr>' +
-            '<td>' + q.name + '</td>' +
-            '<td>' + q.code + '</td>' +
+            '<td>' + esc(q.name) + '</td>' +
+            '<td>' + esc(q.code) + '</td>' +
             '<td>' + q.price.toFixed(2) + '</td>' +
             '<td class="' + cls + '">' + sign + q.changePercent.toFixed(2) + '%</td>' +
             '<td class="' + cls + '">' + sign + q.changeAmount.toFixed(2) + '</td>' +
@@ -69,6 +80,8 @@ export class OverviewPanel {
         }
         html += '</table>';
         document.getElementById('content').innerHTML = html;
+      } else if (msg.type === 'bossMode') {
+        document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });
   </script>
@@ -85,8 +98,15 @@ export class OverviewPanel {
   }
 
   private refreshContent() {
+    if (!this.panel) return;
     const quotes = this.provider.getQuotes();
     const quoteList = Array.from(quotes.values());
-    this.panel!.webview.postMessage({ type: 'quotes', data: quoteList });
+    this.panel.webview.postMessage({ type: 'quotes', data: quoteList });
+  }
+
+  setBossMode(enabled: boolean, saturation: number): void {
+    if (this.panel) {
+      this.panel.webview.postMessage({ type: 'bossMode', enabled, saturation });
+    }
   }
 }

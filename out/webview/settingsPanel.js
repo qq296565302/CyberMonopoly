@@ -55,6 +55,7 @@ class SettingsPanel {
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <style>
     body { margin: 0; padding: 16px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
     h2 { margin: 0 0 16px 0; font-size: 16px; }
@@ -98,6 +99,12 @@ class SettingsPanel {
         }
       });
     });
+    window.addEventListener('message', event => {
+      const msg = event.data;
+      if (msg.type === 'bossMode') {
+        document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
+      }
+    });
   </script>
 </body>
 </html>`;
@@ -112,6 +119,11 @@ class SettingsPanel {
                 vscode.window.showInformationMessage('设置已保存');
             }
         });
+    }
+    setBossMode(enabled, saturation) {
+        if (this.panel) {
+            this.panel.webview.postMessage({ type: 'bossMode', enabled, saturation });
+        }
     }
 }
 exports.SettingsPanel = SettingsPanel;

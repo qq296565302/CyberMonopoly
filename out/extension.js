@@ -55,15 +55,27 @@ let stockTicker;
 let refreshTimer;
 let newsTimer;
 let isActivated = false;
+let alertManager;
+let bossMode = false;
+let chartViewProviderRef;
+let newsProviderRef;
+let overviewPanelRef;
+let settingsPanelRef;
+let aiChatPanelRef;
 async function activate(context) {
     isActivated = true;
     const stateManager = new stateManager_1.StateManager(context.globalState);
     watchlistProvider = new watchlistProvider_1.WatchlistProvider(stateManager);
     newsProvider = new newsProvider_1.NewsViewProvider(stateManager);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('cyberMonopolyWatchlist', watchlistProvider), vscode.window.registerWebviewViewProvider('cyberMonopolyNews', newsProvider));
-    const chartPanel = new chartPanel_1.ChartPanel();
+    const chartViewProvider = new chartPanel_1.ChartViewProvider(context);
     const overviewPanel = new overviewPanel_1.OverviewPanel(watchlistProvider);
     const settingsPanel = new settingsPanel_1.SettingsPanel();
+    chartViewProviderRef = chartViewProvider;
+    newsProviderRef = newsProvider;
+    overviewPanelRef = overviewPanel;
+    settingsPanelRef = settingsPanel;
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider('cyberMonopolyChart', chartViewProvider));
     const config = vscode.workspace.getConfiguration('cyberMonopoly');
     const llmBaseUrl = config.get('llmBaseUrl', '');
     const llmApiKey = config.get('llmApiKey', '');
@@ -75,20 +87,39 @@ async function activate(context) {
         temperature: 0.7,
     });
     const aiChatPanel = new aiChatPanel_1.AiChatPanel(llm, context.globalState);
-    const alertManager = new alert_1.AlertManager(context.globalState);
-    context.subscriptions.push(...(0, watchlist_1.registerWatchlistCommands)(context, watchlistProvider, chartPanel), ...(0, news_1.registerNewsCommands)(context, newsProvider), ...(0, ai_1.registerAiCommands)(context, llm, aiChatPanel), ...(0, ai_1.registerSettingsCommands)(context, settingsPanel), ...(0, ai_1.registerOverviewCommands)(context, overviewPanel), ...(0, ai_1.registerStatusBarCommands)(context));
+    aiChatPanel.setWatchlistProvider(watchlistProvider);
+    aiChatPanelRef = aiChatPanel;
+    alertManager = new alert_1.AlertManager(context.globalState);
+    context.subscriptions.push(...(0, watchlist_1.registerWatchlistCommands)(context, watchlistProvider, chartViewProvider), ...(0, news_1.registerNewsCommands)(context, newsProvider), ...(0, ai_1.registerAiCommands)(context, llm, aiChatPanel), ...(0, ai_1.registerSettingsCommands)(context, settingsPanel), ...(0, ai_1.registerOverviewCommands)(context, overviewPanel), ...(0, ai_1.registerStatusBarCommands)(context), vscode.commands.registerCommand('cyberMonopoly.toggleBossKey', () => {
+        const cfg = vscode.workspace.getConfiguration('cyberMonopoly');
+        if (!cfg.get('bossKeyEnabled', true)) {
+            vscode.window.showInformationMessage('老板键未启用，请在设置中开启');
+            return;
+        }
+        bossMode = !bossMode;
+        const saturation = cfg.get('bossKeySaturation', 10);
+        applyBossMode(saturation);
+        vscode.window.showInformationMessage(bossMode ? '老板键已激活 - 隐蔽模式' : '老板键已关闭 - 正常模式');
+    }));
     const enableStatusBar = config.get('enableStatusBar', true);
     if (enableStatusBar) {
         stockTicker = new stockTicker_1.StockTicker(watchlistProvider);
         context.subscriptions.push(stockTicker);
     }
     await vscode.commands.executeCommand('setContext', 'cyberMonopoly:enabled', true);
-    const timers = startAutoRefresh(alertManager);
-    context.subscriptions.push({ dispose: () => { if (timers.refresh)
-            clearInterval(timers.refresh); if (timers.news)
-            clearInterval(timers.news); } });
+    startAutoRefresh();
+    context.subscriptions.push({ dispose: () => { if (refreshTimer)
+            clearInterval(refreshTimer); if (newsTimer)
+            clearInterval(newsTimer); } });
     await watchlistProvider.refresh();
+    syncAlertRules();
     await newsProvider.refresh();
+    const bossKeyEnabled = config.get('bossKeyEnabled', true);
+    if (bossKeyEnabled) {
+        bossMode = true;
+        const sat = config.get('bossKeySaturation', 10);
+        applyBossMode(sat);
+    }
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
         if (!isActivated)
             return;
@@ -104,13 +135,7 @@ async function activate(context) {
             }
         }
         if (e.affectsConfiguration('cyberMonopoly.refreshInterval')) {
-            if (refreshTimer)
-                clearInterval(refreshTimer);
-            if (newsTimer)
-                clearInterval(newsTimer);
-            const newTimers = startAutoRefresh(alertManager);
-            refreshTimer = newTimers.refresh;
-            newsTimer = newTimers.news;
+            startAutoRefresh();
         }
     });
     context.subscriptions.push(configChangeListener);
@@ -128,7 +153,23 @@ function deactivate() {
     }
     console.log('[赛博大富翁] 已停活');
 }
-function startAutoRefresh(alertManager) {
+function syncAlertRules() {
+    for (const stock of watchlistProvider.getStocks()) {
+        alertManager.addRule(stock);
+    }
+}
+function applyBossMode(saturation) {
+    chartViewProviderRef?.setBossMode(bossMode, saturation);
+    newsProviderRef?.setBossMode(bossMode, saturation);
+    overviewPanelRef?.setBossMode(bossMode, saturation);
+    settingsPanelRef?.setBossMode(bossMode, saturation);
+    aiChatPanelRef?.setBossMode(bossMode, saturation);
+}
+function startAutoRefresh() {
+    if (refreshTimer)
+        clearInterval(refreshTimer);
+    if (newsTimer)
+        clearInterval(newsTimer);
     const config = vscode.workspace.getConfiguration('cyberMonopoly');
     const interval = config.get('refreshInterval', 10) * 1000;
     refreshTimer = setInterval(async () => {
@@ -136,6 +177,7 @@ function startAutoRefresh(alertManager) {
             return;
         try {
             await watchlistProvider.refresh();
+            syncAlertRules();
             const quotes = Array.from(watchlistProvider.getQuotes().values());
             if (quotes.length > 0) {
                 alertManager.check(quotes);
@@ -152,6 +194,5 @@ function startAutoRefresh(alertManager) {
         }
         catch (e) { /* silent */ }
     }, newsInterval);
-    return { refresh: refreshTimer, news: newsTimer };
 }
 //# sourceMappingURL=extension.js.map

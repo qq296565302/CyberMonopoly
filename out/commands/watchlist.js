@@ -35,7 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerWatchlistCommands = registerWatchlistCommands;
 const vscode = __importStar(require("vscode"));
-function registerWatchlistCommands(context, provider, chartPanel) {
+function registerWatchlistCommands(context, provider, chartView) {
     const disposables = [];
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.addToWatchlist', async () => {
         const input = await vscode.window.showInputBox({
@@ -74,7 +74,18 @@ function registerWatchlistCommands(context, provider, chartPanel) {
                 return;
             }
         }
-        await chartPanel.show(code, name || '未知', context);
+        await chartView.show(code, name || '未知');
+    }));
+    disposables.push(vscode.commands.registerCommand('cyberMonopoly.sortWatchlist', async () => {
+        const items = [
+            { label: '按涨跌幅排序 (高→低)', value: 'percent-desc' },
+            { label: '按涨跌幅排序 (低→高)', value: 'percent-asc' },
+            { label: '按添加时间排序', value: 'time-asc' },
+        ];
+        const picked = await vscode.window.showQuickPick(items, { placeHolder: '选择排序方式' });
+        if (!picked)
+            return;
+        provider.sortStocks(picked.value);
     }));
     return disposables;
 }

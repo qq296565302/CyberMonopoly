@@ -4,7 +4,7 @@ import { NewsViewProvider } from './provider/newsProvider';
 import { StockTicker } from './statusbar/stockTicker';
 import { StateManager } from './storage/stateManager';
 import { AlertManager } from './notification/alert';
-import { ChartPanel } from './webview/chartPanel';
+import { ChartViewProvider } from './webview/chartPanel';
 import { AiChatPanel } from './webview/aiChatPanel';
 import { OverviewPanel } from './webview/overviewPanel';
 import { SettingsPanel } from './webview/settingsPanel';
@@ -19,6 +19,13 @@ let stockTicker: StockTicker | undefined;
 let refreshTimer: NodeJS.Timeout | undefined;
 let newsTimer: NodeJS.Timeout | undefined;
 let isActivated = false;
+let alertManager: AlertManager;
+let bossMode = false;
+let chartViewProviderRef: ChartViewProvider;
+let newsProviderRef: NewsViewProvider;
+let overviewPanelRef: OverviewPanel;
+let settingsPanelRef: SettingsPanel;
+let aiChatPanelRef: AiChatPanel;
 
 export async function activate(context: vscode.ExtensionContext) {
   isActivated = true;
@@ -38,9 +45,20 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  const chartPanel = new ChartPanel();
+  const chartViewProvider = new ChartViewProvider(context);
   const overviewPanel = new OverviewPanel(watchlistProvider);
   const settingsPanel = new SettingsPanel();
+  chartViewProviderRef = chartViewProvider;
+  newsProviderRef = newsProvider;
+  overviewPanelRef = overviewPanel;
+  settingsPanelRef = settingsPanel;
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      'cyberMonopolyChart',
+      chartViewProvider
+    )
+  );
 
   const config = vscode.workspace.getConfiguration('cyberMonopoly');
   const llmBaseUrl = config.get<string>('llmBaseUrl', '');
@@ -55,16 +73,29 @@ export async function activate(context: vscode.ExtensionContext) {
   });
 
   const aiChatPanel = new AiChatPanel(llm, context.globalState);
+  aiChatPanel.setWatchlistProvider(watchlistProvider);
+  aiChatPanelRef = aiChatPanel;
 
-  const alertManager = new AlertManager(context.globalState);
+  alertManager = new AlertManager(context.globalState);
 
   context.subscriptions.push(
-    ...registerWatchlistCommands(context, watchlistProvider, chartPanel),
+    ...registerWatchlistCommands(context, watchlistProvider, chartViewProvider),
     ...registerNewsCommands(context, newsProvider),
     ...registerAiCommands(context, llm, aiChatPanel),
     ...registerSettingsCommands(context, settingsPanel),
     ...registerOverviewCommands(context, overviewPanel),
-    ...registerStatusBarCommands(context)
+    ...registerStatusBarCommands(context),
+    vscode.commands.registerCommand('cyberMonopoly.toggleBossKey', () => {
+      const cfg = vscode.workspace.getConfiguration('cyberMonopoly');
+      if (!cfg.get<boolean>('bossKeyEnabled', true)) {
+        vscode.window.showInformationMessage('老板键未启用，请在设置中开启');
+        return;
+      }
+      bossMode = !bossMode;
+      const saturation = cfg.get<number>('bossKeySaturation', 10);
+      applyBossMode(saturation);
+      vscode.window.showInformationMessage(bossMode ? '老板键已激活 - 隐蔽模式' : '老板键已关闭 - 正常模式');
+    })
   );
 
   const enableStatusBar = config.get<boolean>('enableStatusBar', true);
@@ -75,11 +106,19 @@ export async function activate(context: vscode.ExtensionContext) {
 
   await vscode.commands.executeCommand('setContext', 'cyberMonopoly:enabled', true);
 
-  const timers = startAutoRefresh(alertManager);
-  context.subscriptions.push({ dispose: () => { if (timers.refresh) clearInterval(timers.refresh); if (timers.news) clearInterval(timers.news); } });
+  startAutoRefresh();
+  context.subscriptions.push({ dispose: () => { if (refreshTimer) clearInterval(refreshTimer); if (newsTimer) clearInterval(newsTimer); } });
 
   await watchlistProvider.refresh();
+  syncAlertRules();
   await newsProvider.refresh();
+
+  const bossKeyEnabled = config.get<boolean>('bossKeyEnabled', true);
+  if (bossKeyEnabled) {
+    bossMode = true;
+    const sat = config.get<number>('bossKeySaturation', 10);
+    applyBossMode(sat);
+  }
 
   const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
     if (!isActivated) return;
@@ -94,11 +133,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
     if (e.affectsConfiguration('cyberMonopoly.refreshInterval')) {
-      if (refreshTimer) clearInterval(refreshTimer);
-      if (newsTimer) clearInterval(newsTimer);
-      const newTimers = startAutoRefresh(alertManager);
-      refreshTimer = newTimers.refresh;
-      newsTimer = newTimers.news;
+      startAutoRefresh();
     }
   });
   context.subscriptions.push(configChangeListener);
@@ -117,7 +152,24 @@ export function deactivate() {
   console.log('[赛博大富翁] 已停活');
 }
 
-function startAutoRefresh(alertManager: AlertManager): { refresh: NodeJS.Timeout | undefined, news: NodeJS.Timeout | undefined } {
+function syncAlertRules() {
+  for (const stock of watchlistProvider.getStocks()) {
+    alertManager.addRule(stock);
+  }
+}
+
+function applyBossMode(saturation: number): void {
+  chartViewProviderRef?.setBossMode(bossMode, saturation);
+  newsProviderRef?.setBossMode(bossMode, saturation);
+  overviewPanelRef?.setBossMode(bossMode, saturation);
+  settingsPanelRef?.setBossMode(bossMode, saturation);
+  aiChatPanelRef?.setBossMode(bossMode, saturation);
+}
+
+function startAutoRefresh(): void {
+  if (refreshTimer) clearInterval(refreshTimer);
+  if (newsTimer) clearInterval(newsTimer);
+
   const config = vscode.workspace.getConfiguration('cyberMonopoly');
   const interval = config.get<number>('refreshInterval', 10) * 1000;
 
@@ -125,6 +177,7 @@ function startAutoRefresh(alertManager: AlertManager): { refresh: NodeJS.Timeout
     if (!isActivated) return;
     try {
       await watchlistProvider.refresh();
+      syncAlertRules();
       const quotes = Array.from(watchlistProvider.getQuotes().values());
       if (quotes.length > 0) {
         alertManager.check(quotes);
@@ -139,6 +192,4 @@ function startAutoRefresh(alertManager: AlertManager): { refresh: NodeJS.Timeout
       await newsProvider.refresh();
     } catch (e) { /* silent */ }
   }, newsInterval);
-
-  return { refresh: refreshTimer, news: newsTimer };
 }
