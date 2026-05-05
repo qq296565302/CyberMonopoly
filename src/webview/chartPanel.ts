@@ -67,16 +67,18 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' ${webview.cspSource}; style-src 'unsafe-inline';">
   <style>
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
-    .toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); align-items: center; flex-wrap: wrap; }
-    .toolbar button {
+    .toolbar { display: flex; gap: 4px; padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border); align-items: center; flex-wrap: wrap; }
+    .toolbar button, .toolbar select {
       background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-      border: none; padding: 3px 8px; cursor: pointer; border-radius: 2px; font-size: 11px; opacity: 0.8;
+      border: none; padding: 2px 6px; cursor: pointer; border-radius: 2px; font-size: 11px; opacity: 0.8;
+      font-family: var(--vscode-font-family); outline: none;
     }
-    .toolbar button:hover { opacity: 1; }
+    .toolbar select { padding: 2px 4px; }
+    .toolbar button:hover, .toolbar select:hover { opacity: 1; }
     .toolbar button.active { opacity: 1; outline: 1px solid var(--vscode-focusBorder); }
-    .toolbar .title { flex: 1; font-weight: bold; font-size: 13px; min-width: 100px; }
-    .toolbar .sep { width: 1px; height: 14px; background: var(--vscode-panel-border); }
-    #chart-area { height: calc(100% - 36px); width: 100%; display: flex; flex-direction: column; }
+    .toolbar .title { flex: 1; font-weight: bold; font-size: 12px; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toolbar .sep { width: 1px; height: 12px; background: var(--vscode-panel-border); }
+    #chart-area { height: calc(100% - 28px); width: 100%; display: flex; flex-direction: column; }
     #price-container { flex: 7; width: 100%; position: relative; }
     #volume-container { flex: 3; width: 100%; position: relative; border-top: 1px solid rgba(128,128,128,0.2); }
     #volume-container .vol-label { position: absolute; top: 4px; left: 10px; z-index: 10; font-size: 10px; color: var(--vscode-descriptionForeground); pointer-events: none; }
@@ -91,6 +93,8 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
     #info-panel .up { color: #ef4444; }
     #info-panel .down { color: #22c55e; }
     #info-panel .flat { color: #aaa; }
+    #btn-boss { transition: background 0.2s; }
+    #btn-boss.active-boss { background: #F59E0B; color: #000; opacity: 1; }
   </style>
 </head>
 <body>
@@ -99,12 +103,16 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
     <button id="btn-kline" class="active">K线</button>
     <button id="btn-intraday">分时</button>
     <span class="sep"></span>
-    <button id="btn-d15">15日</button>
-    <button id="btn-d30" class="active">30日</button>
-    <button id="btn-d60">60日</button>
-    <button id="btn-d120">120日</button>
+    <select id="sel-days">
+      <option value="d15">15日</option>
+      <option value="d30" selected>30日</option>
+      <option value="d60">60日</option>
+      <option value="d120">120日</option>
+    </select>
     <span class="sep"></span>
-    <button id="btn-refresh">↻ 刷新</button>
+    <button id="btn-refresh" title="刷新">↻</button>
+    <button id="btn-boss" title="老板键">👁</button>
+    <button id="btn-ai" title="AI助手">🤖</button>
   </div>
   <div id="chart-area">
     <div id="price-container"><div class="loading">加载中...</div><div id="info-panel"></div></div>
@@ -316,6 +324,11 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
       if (el) el.classList.add('active');
     }
 
+    function setSelectedDays(daysAction) {
+      var sel = document.getElementById('sel-days');
+      if (sel) sel.value = daysAction;
+    }
+
     function renderCandlestick(data) {
       if (!ensureCharts()) return;
       if (mainSeries) { priceChart.removeSeries(mainSeries); mainSeries = null; }
@@ -327,7 +340,6 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         timeScale: {
           timeVisible: false,
           secondsVisible: false,
-          barSpacing: 3,
           tickMarkFormatter: function(time) {
             if (typeof time === 'string') return time.slice(5);
             if (typeof time === 'object' && time !== null) {
@@ -376,7 +388,6 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         priceScaleId: 'vol',
       });
       volChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
-      volChart.applyOptions({ timeScale: { barSpacing: 3 } });
       volumeSeries.setData(volData);
 
       priceChart.timeScale().fitContent();
@@ -396,7 +407,6 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         timeScale: {
           timeVisible: true,
           secondsVisible: false,
-          barSpacing: 2,
           tickMarkFormatter: function(time) {
             if (typeof time === 'number') {
               var d = new Date(time * 1000);
@@ -455,7 +465,6 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         priceScaleId: 'vol',
       });
       volChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
-      volChart.applyOptions({ timeScale: { barSpacing: 2 } });
       volumeSeries.setData(volData);
 
       priceChart.timeScale().fitContent();
@@ -480,6 +489,16 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         volumeSeries = null;
       } else if (msg.type === 'bossMode') {
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
+        var bossBtn = document.getElementById('btn-boss');
+        if (bossBtn) {
+          if (msg.enabled) {
+            bossBtn.classList.add('active-boss');
+            bossBtn.setAttribute('title', '隐蔽模式 - 点击关闭');
+          } else {
+            bossBtn.classList.remove('active-boss');
+            bossBtn.setAttribute('title', '正常模式 - 点击开启');
+          }
+        }
       }
     });
 
@@ -488,10 +507,20 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         var action = btn.id.replace('btn-', '');
         if (action === 'kline') { setActiveBtn('kline'); }
         else if (action === 'intraday') { setActiveBtn('intraday'); }
-        else if (action.startsWith('d')) { setActiveBtn('kline'); setActiveBtn(action); }
         vscode.postMessage({ action: action });
       });
     });
+
+    var selDays = document.getElementById('sel-days');
+    if (selDays) {
+      selDays.addEventListener('change', function() {
+        var action = selDays.value;
+        setActiveBtn('kline');
+        vscode.postMessage({ action: action });
+      });
+    }
+
+    vscode.postMessage({ type: 'ready' });
   </script>
 </body>
 </html>`;
@@ -500,6 +529,17 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
   private setupMessageHandler() {
     if (!this.view) return;
     this.view.webview.onDidReceiveMessage(async (msg) => {
+      if (msg.type === 'ready') {
+        if (this.currentCode) {
+          this.view!.title = `${this.currentName} (${this.currentCode})`;
+          if (this.isCandlestick) {
+            await this.loadKline(this.currentDays);
+          } else {
+            await this.loadIntraday();
+          }
+        }
+        return;
+      }
       switch (msg.action) {
         case 'kline':
           this.isCandlestick = true;
@@ -532,6 +572,12 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         case 'refresh':
           if (this.isCandlestick) await this.loadKline(this.currentDays);
           else await this.loadIntraday();
+          break;
+        case 'boss':
+          await vscode.commands.executeCommand('cyberMonopoly.toggleBossKey');
+          break;
+        case 'ai':
+          await vscode.commands.executeCommand('cyberMonopoly.openAiChat');
           break;
         default:
           console.warn('[赛博大富翁] 未知图表 action:', msg.action);

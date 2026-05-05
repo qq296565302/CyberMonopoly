@@ -10,6 +10,15 @@ interface AlertRule {
   lastAlertTime: number;
 }
 
+function isTradingHours(): boolean {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+
+  const hhmm = now.getHours() * 100 + now.getMinutes();
+  return (hhmm >= 925 && hhmm <= 1131) || (hhmm >= 1255 && hhmm <= 1501);
+}
+
 export class AlertManager {
   private rules: Map<string, AlertRule> = new Map();
   private cooldownMs = 5 * 60 * 1000;
@@ -54,6 +63,8 @@ export class AlertManager {
   }
 
   check(quotes: RealtimeQuote[]): void {
+    if (!isTradingHours()) return;
+
     const now = Date.now();
     
     for (const q of quotes) {

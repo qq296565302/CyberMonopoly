@@ -35,6 +35,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AlertManager = void 0;
 const vscode = __importStar(require("vscode"));
+function isTradingHours() {
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0 || day === 6)
+        return false;
+    const hhmm = now.getHours() * 100 + now.getMinutes();
+    return (hhmm >= 925 && hhmm <= 1131) || (hhmm >= 1255 && hhmm <= 1501);
+}
 class AlertManager {
     constructor(state) {
         this.rules = new Map();
@@ -72,6 +80,8 @@ class AlertManager {
         this.state.update(this.STORAGE_KEY, saved);
     }
     check(quotes) {
+        if (!isTradingHours())
+            return;
         const now = Date.now();
         for (const q of quotes) {
             const rule = this.rules.get(q.code);

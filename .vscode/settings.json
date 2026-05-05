@@ -1,0 +1,5 @@
+{
+  "cyberMonopoly.llmBaseUrl": "",
+  "cyberMonopoly.llmApiKey": "",
+  "cyberMonopoly.llmModel": "gpt-3.5-turbo"
+}
