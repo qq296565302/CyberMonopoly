@@ -1,5 +1,4 @@
 import * as https from 'https';
-import * as iconv from 'iconv-lite';
 import { detectMarket, Market } from '../models/stock';
 import { NewsItem } from '../models/news';
 import { DataPoint, DataSeries } from '../models/chart';
@@ -72,7 +71,7 @@ function fetchWithReferer(url: string, timeoutMs = 10000): Promise<Buffer> {
 export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
   const url = `https://hq.sinajs.cn/list=${toSinaCode(code)}`;
   const buffer = await fetchWithReferer(url);
-  const text = iconv.decode(buffer, 'gbk');
+  const text = new TextDecoder('gbk').decode(buffer);
   
   const match = text.match(/"([^"]+)"/);
   if (!match) throw new Error(`解析失败: ${text}`);
@@ -105,7 +104,7 @@ export async function getBatchQuotes(codes: string[]): Promise<RealtimeQuote[]> 
   const sinaCodes = codes.map(toSinaCode).join(',');
   const url = `https://hq.sinajs.cn/list=${sinaCodes}`;
   const buffer = await fetchWithReferer(url);
-  const text = iconv.decode(buffer, 'gbk');
+  const text = new TextDecoder('gbk').decode(buffer);
   
   const lines = text.split('\n').filter(l => l.trim().length > 0);
   const results: RealtimeQuote[] = [];
@@ -223,7 +222,18 @@ export async function getKlineData(code: string, days: number, scale: number = 2
   const buffer = await fetchWithReferer(url);
   const text = buffer.toString('utf-8');
   
-  const raw: KlineRaw[] = JSON.parse(text);
+  const raw: KlineRaw[] | null = JSON.parse(text);
+  
+  if (!raw || !Array.isArray(raw) || raw.length === 0) {
+    const realtime = await getRealtimeQuote(code).catch(() => null);
+    return {
+      name: `${realtime?.name || code} ${code}`,
+      data: [],
+      color: hashColor(code),
+      prevClose: realtime?.prevClose,
+      type: 'candlestick',
+    };
+  }
   
   const points: DataPoint[] = raw.map(item => ({
     date: new Date(item.day),

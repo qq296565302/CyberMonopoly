@@ -2,8 +2,8 @@
   "name": "cyber-monopoly",
   "displayName": "赛博大富翁",
   "description": "A-share market tool hidden in your editor. Perfect for... coding.",
-  "version": "1.0.0",
-  "publisher": "cyber-monopoly",
+  "version": "1.0.6",
+  "publisher": "cyber-monopoly-dev",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -25,30 +25,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/cyber-monopoly"
+    "url": "https://github.com/qq296565302/CyberMonopoly.git"
   },
   "license": "MIT",
-  "homepage": "https://github.com/your-username/cyber-monopoly#readme",
+  "homepage": "https://github.com/qq296565302/CyberMonopoly#readme",
   "bugs": {
-    "url": "https://github.com/your-username/cyber-monopoly/issues"
+    "url": "https://github.com/qq296565302/CyberMonopoly/issues"
   },
   "activationEvents": [
-    "onView:cyberMonopolyWatchlist",
-    "onView:cyberMonopolyNews",
-    "onCommand:cyberMonopoly.showOverview",
-    "onCommand:cyberMonopoly.openChart",
-    "onCommand:cyberMonopoly.openAiChat",
-    "onCommand:cyberMonopoly.addToWatchlist",
-    "onCommand:cyberMonopoly.refreshQuotes",
-    "onCommand:cyberMonopoly.refreshNews",
-    "onCommand:cyberMonopoly.toggleStatusBar",
-    "onCommand:cyberMonopoly.openSettings",
-    "onCommand:cyberMonopoly.openNewsDetail",
-    "onCommand:cyberMonopoly.toggleBossKey",
-    "onCommand:cyberMonopoly.openStockNews",
-    "onCommand:cyberMonopoly.openStockReport",
-    "onCommand:cyberMonopoly.openStockFinance",
-    "onCommand:cyberMonopoly.addHotToWatchlist"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -80,7 +65,8 @@
       {
         "command": "cyberMonopoly.removeFromWatchlist",
         "title": "移除自选股",
-        "category": "赛博大富翁"
+        "category": "赛博大富翁",
+        "icon": "$(trash)"
       },
       {
         "command": "cyberMonopoly.refreshNews",
@@ -356,7 +342,6 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "iconv-lite": "^0.6.3",
     "lightweight-charts": "^4.1.0"
   }
 }

@@ -350,7 +350,23 @@ class ChartViewProvider {
       if (sel) sel.value = daysAction;
     }
 
+    function destroyCharts() {
+      if (mainSeries && priceChart) { try { priceChart.removeSeries(mainSeries); } catch(e) {} }
+      if (volumeSeries && volChart) { try { volChart.removeSeries(volumeSeries); } catch(e) {} }
+      if (priceChart) { priceChart.remove(); priceChart = null; }
+      if (volChart) { volChart.remove(); volChart = null; }
+      mainSeries = null;
+      volumeSeries = null;
+    }
+
     function renderCandlestick(data) {
+      if (!data || data.length === 0) {
+        destroyCharts();
+        document.getElementById('price-container').innerHTML =
+          '<div class="loading">暂无K线数据</div>';
+        document.getElementById('volume-container').innerHTML = '';
+        return;
+      }
       if (!ensureCharts()) return;
       if (mainSeries) { priceChart.removeSeries(mainSeries); mainSeries = null; }
       if (volumeSeries) { volChart.removeSeries(volumeSeries); volumeSeries = null; }
@@ -488,9 +504,14 @@ class ChartViewProvider {
       volChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
       volumeSeries.setData(volData);
 
-      priceChart.timeScale().fitContent();
-      volChart.timeScale().fitContent();
-      syncTimeScales(priceChart, volChart);
+      var now = new Date();
+      var todayStr = now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
+      var amStart = Math.floor(new Date(todayStr + 'T09:25:00').getTime() / 1000);
+      var pmEnd = Math.floor(new Date(todayStr + 'T15:05:00').getTime() / 1000);
+      priceChart.timeScale().setVisibleLogicalRange({ from: -5, to: data.length + 5 });
+      volChart.timeScale().setVisibleLogicalRange({ from: -5, to: data.length + 5 });
     }
 
     window.addEventListener('message', function(event) {

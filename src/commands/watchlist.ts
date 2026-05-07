@@ -27,71 +27,55 @@ export function registerWatchlistCommands(
 
   disposables.push(
     vscode.commands.registerCommand('cyberMonopoly.addToWatchlist', async () => {
-      const quickPick = vscode.window.createQuickPick();
-      quickPick.placeholder = '输入股票代码或中文名称搜索';
-      quickPick.title = '添加自选股';
-      quickPick.items = [];
-      quickPick.busy = false;
+      while (true) {
+        const keyword = await vscode.window.showInputBox({
+          prompt: '输入股票代码或中文名称搜索（Esc退出）',
+          placeHolder: '例如: 600519 或 茅台',
+          title: '添加自选股',
+          ignoreFocusOut: true,
+        });
+        if (!keyword || !keyword.trim()) return;
 
-      let debounceTimer: NodeJS.Timeout | undefined;
-
-      quickPick.onDidChangeValue((value) => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        const keyword = value.trim();
-        if (!keyword) {
-          quickPick.items = [];
-          return;
+        let results: { code: string; name: string; market: string; type: string }[] = [];
+        try {
+          results = await searchStocks(keyword.trim());
+        } catch (e) {
+          vscode.window.showErrorMessage(`搜索失败: ${e}`);
+          continue;
         }
 
-        quickPick.busy = true;
-        debounceTimer = setTimeout(async () => {
-          try {
-            const results = await searchStocks(keyword);
-            quickPick.items = results.map(r => ({
-              label: `$(search) ${r.name}`,
-              description: r.code,
-              detail: `${r.type || '股票'}  ${r.market || ''}`,
-              _stock: r,
-            } as any));
+        const picks: vscode.QuickPickItem[] = results.map(r => ({
+          label: r.name,
+          description: r.code,
+          detail: `${r.type || '股票'}  ${r.market || ''}`,
+        }));
 
-            if (quickPick.items.length === 0 && /^\d{6}$/.test(keyword)) {
-              quickPick.items = [{
-                label: `$(add) 直接添加 ${keyword}`,
-                description: '',
-                detail: '未找到匹配名称，按代码直接添加',
-                _stock: { code: keyword, name: '' },
-              } as any];
-            }
-          } catch {
-            if (/^\d{6}$/.test(keyword)) {
-              quickPick.items = [{
-                label: `$(add) 直接添加 ${keyword}`,
-                description: '',
-                detail: '搜索失败，按代码直接添加',
-                _stock: { code: keyword, name: '' },
-              } as any];
-            }
-          } finally {
-            quickPick.busy = false;
-          }
-        }, 300);
-      });
-
-      quickPick.onDidAccept(async () => {
-        const selected = quickPick.selectedItems[0] as any;
-        if (selected && selected._stock) {
-          const s = selected._stock;
-          quickPick.hide();
-          await provider.addStock(s.code, s.name || undefined);
+        if (picks.length === 0 && /^\d{6}$/.test(keyword.trim())) {
+          picks.push({
+            label: `直接添加 ${keyword.trim()}`,
+            description: keyword.trim(),
+            detail: '未找到匹配名称，按代码直接添加',
+          });
         }
-      });
 
-      quickPick.onDidHide(() => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        quickPick.dispose();
-      });
+        if (picks.length === 0) {
+          vscode.window.showWarningMessage('未找到匹配的股票，请重新输入');
+          continue;
+        }
 
-      quickPick.show();
+        const selected = await vscode.window.showQuickPick(picks, {
+          title: '添加自选股 - 选择股票（Esc返回搜索）',
+          placeHolder: '选择要添加的股票',
+          ignoreFocusOut: true,
+        });
+
+        if (!selected) continue;
+
+        const code = selected.description || keyword.trim();
+        const name = selected.label.includes('直接添加') ? '' : selected.label;
+        await provider.addStock(code, name || undefined);
+        return;
+      }
     })
   );
 

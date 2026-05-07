@@ -207,7 +207,8 @@ export interface StockSearchResult {
 export async function searchStocks(keyword: string): Promise<StockSearchResult[]> {
   const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(keyword)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=20`;
   const buffer = await emFetch(url);
-  const data = JSON.parse(buffer.toString('utf-8'));
+  const text = buffer.toString('utf-8');
+  const data = JSON.parse(text);
 
   const list: any[] = data?.QuotationCodeTable?.Data || [];
 

@@ -39,7 +39,6 @@ exports.getIntradayData = getIntradayData;
 exports.getKlineData = getKlineData;
 exports.get7x24News = get7x24News;
 const https = __importStar(require("https"));
-const iconv = __importStar(require("iconv-lite"));
 function toSinaCode(code) {
     const prefix = code.substring(0, 2);
     if (/^(60|68|51|50|52|56|58)$/.test(prefix))
@@ -87,7 +86,7 @@ function fetchWithReferer(url, timeoutMs = 10000) {
 async function getRealtimeQuote(code) {
     const url = `https://hq.sinajs.cn/list=${toSinaCode(code)}`;
     const buffer = await fetchWithReferer(url);
-    const text = iconv.decode(buffer, 'gbk');
+    const text = new TextDecoder('gbk').decode(buffer);
     const match = text.match(/"([^"]+)"/);
     if (!match)
         throw new Error(`解析失败: ${text}`);
@@ -117,7 +116,7 @@ async function getBatchQuotes(codes) {
     const sinaCodes = codes.map(toSinaCode).join(',');
     const url = `https://hq.sinajs.cn/list=${sinaCodes}`;
     const buffer = await fetchWithReferer(url);
-    const text = iconv.decode(buffer, 'gbk');
+    const text = new TextDecoder('gbk').decode(buffer);
     const lines = text.split('\n').filter(l => l.trim().length > 0);
     const results = [];
     for (const line of lines) {
@@ -208,6 +207,16 @@ async function getKlineData(code, days, scale = 240) {
     const buffer = await fetchWithReferer(url);
     const text = buffer.toString('utf-8');
     const raw = JSON.parse(text);
+    if (!raw || !Array.isArray(raw) || raw.length === 0) {
+        const realtime = await getRealtimeQuote(code).catch(() => null);
+        return {
+            name: `${realtime?.name || code} ${code}`,
+            data: [],
+            color: hashColor(code),
+            prevClose: realtime?.prevClose,
+            type: 'candlestick',
+        };
+    }
     const points = raw.map(item => ({
         date: new Date(item.day),
         value: parseFloat(item.close || '0'),

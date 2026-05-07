@@ -29,8 +29,25 @@ let settingsPanelRef: SettingsPanel;
 let aiChatPanelRef: AiChatPanel;
 let stockDetailPanelRef: StockDetailPanel;
 
-export async function activate(context: vscode.ExtensionContext) {
-  isActivated = true;
+export function activate(context: vscode.ExtensionContext) {
+  console.log('[赛博大富翁] activate() 被调用');
+
+  try {
+    doActivateSync(context);
+  } catch (e) {
+    console.error('[赛博大富翁] 同步激活失败:', e);
+    vscode.window.showErrorMessage(`赛博大富翁激活失败: ${e}`);
+  }
+
+  doActivateAsync(context).catch(e => {
+    console.error('[赛博大富翁] 异步激活失败:', e);
+    vscode.window.showErrorMessage(`赛博大富翁初始化失败: ${e}`);
+  });
+
+  return;
+}
+
+function doActivateSync(context: vscode.ExtensionContext) {
   const stateManager = new StateManager(context.globalState);
 
   watchlistProvider = new WatchlistProvider(stateManager);
@@ -108,20 +125,26 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(stockTicker);
   }
 
+  isActivated = true;
+  console.log('[赛博大富翁] 同步激活完成，命令已注册');
+}
+
+async function doActivateAsync(context: vscode.ExtensionContext) {
   await vscode.commands.executeCommand('setContext', 'cyberMonopoly:enabled', true);
 
   startAutoRefresh();
   context.subscriptions.push({ dispose: () => { if (refreshTimer) clearInterval(refreshTimer); if (newsTimer) clearInterval(newsTimer); } });
 
-  await watchlistProvider.refresh();
+  try { await watchlistProvider.refresh(); } catch (e) { console.warn('[赛博大富翁] 自选股刷新失败:', e); }
   syncAlertRules();
-  await newsProvider.refresh();
+  try { await newsProvider.refresh(); } catch (e) { console.warn('[赛博大富翁] 快讯刷新失败:', e); }
 
+  const config = vscode.workspace.getConfiguration('cyberMonopoly');
   const bossKeyEnabled = config.get<boolean>('bossKeyEnabled', true);
   if (bossKeyEnabled) {
     bossMode = true;
     const sat = config.get<number>('bossKeySaturation', 10);
-    applyBossMode(sat);
+    try { applyBossMode(sat); } catch (e) { console.warn('[赛博大富翁] 老板模式初始化失败:', e); }
   }
 
   const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
@@ -142,7 +165,7 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(configChangeListener);
 
-  console.log('[赛博大富翁] 已激活');
+  console.log('[赛博大富翁] 异步激活完成');
 }
 
 export function deactivate() {
