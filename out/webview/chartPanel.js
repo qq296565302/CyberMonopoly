@@ -37,6 +37,7 @@ exports.ChartViewProvider = void 0;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("path"));
 const sina_1 = require("../api/sina");
+const eastmoney_1 = require("../api/eastmoney");
 function getNonce() {
     let text = '';
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -68,6 +69,23 @@ class ChartViewProvider {
         }
     }
     async show(code, name) {
+        const raw = code;
+        if (typeof raw !== 'string' && raw && typeof raw === 'object') {
+            if (raw.stock) {
+                code = raw.stock.code;
+                name = raw.stock.name || name;
+            }
+            else if (raw.hotStock) {
+                code = raw.hotStock.code;
+                name = raw.hotStock.name || name;
+            }
+            else {
+                code = String(raw);
+            }
+        }
+        else if (typeof code !== 'string') {
+            code = String(code || '');
+        }
         this.currentCode = code;
         this.currentName = name;
         if (this.view) {
@@ -639,7 +657,13 @@ class ChartViewProvider {
         if (!this.view)
             return;
         try {
-            const series = await (0, sina_1.getKlineData)(this.currentCode, days);
+            let series;
+            if (days >= 1023) {
+                series = await (0, eastmoney_1.getFullKlineData)(this.currentCode);
+            }
+            else {
+                series = await (0, sina_1.getKlineData)(this.currentCode, days);
+            }
             this.view.webview.postMessage({
                 type: 'candlestick',
                 data: series.data,

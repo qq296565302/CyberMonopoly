@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { getKlineData, getIntradayData } from '../api/sina';
+import { getFullKlineData } from '../api/eastmoney';
 
 function getNonce(): string {
   let text = '';
@@ -43,6 +44,14 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
   }
 
   async show(code: string, name: string) {
+    const raw: any = code;
+    if (typeof raw !== 'string' && raw && typeof raw === 'object') {
+      if (raw.stock) { code = raw.stock.code; name = raw.stock.name || name; }
+      else if (raw.hotStock) { code = raw.hotStock.code; name = raw.hotStock.name || name; }
+      else { code = String(raw); }
+    } else if (typeof code !== 'string') {
+      code = String(code || '');
+    }
     this.currentCode = code;
     this.currentName = name;
 
@@ -615,7 +624,12 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
   private async loadKline(days: number) {
     if (!this.view) return;
     try {
-      const series = await getKlineData(this.currentCode, days);
+      let series;
+      if (days >= 1023) {
+        series = await getFullKlineData(this.currentCode);
+      } else {
+        series = await getKlineData(this.currentCode, days);
+      }
       this.view.webview.postMessage({
         type: 'candlestick',
         data: series.data,

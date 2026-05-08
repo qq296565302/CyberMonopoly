@@ -105,21 +105,35 @@ function registerWatchlistCommands(context, provider, chartView, detailPanel) {
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.refreshQuotes', async () => {
         await provider.refresh();
     }));
-    disposables.push(vscode.commands.registerCommand('cyberMonopoly.openChart', async (code, name) => {
-        if (!code) {
+    disposables.push(vscode.commands.registerCommand('cyberMonopoly.openChart', async (itemOrCode, name) => {
+        let code;
+        let stockName;
+        if (itemOrCode?.stock) {
+            code = itemOrCode.stock.code;
+            stockName = itemOrCode.stock.name;
+        }
+        else if (itemOrCode?.hotStock) {
+            code = itemOrCode.hotStock.code;
+            stockName = itemOrCode.hotStock.name;
+        }
+        else if (typeof itemOrCode === 'string') {
+            code = itemOrCode;
+            stockName = name || '未知';
+        }
+        else {
             const input = await vscode.window.showInputBox({
                 prompt: '输入股票代码',
                 placeHolder: '例如: 600519',
             });
             if (input) {
                 code = input.trim();
-                name = '';
+                stockName = '';
             }
             else {
                 return;
             }
         }
-        await chartView.show(code, name || '未知');
+        await chartView.show(code, stockName || '未知');
     }));
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.sortWatchlist', async () => {
         const items = [

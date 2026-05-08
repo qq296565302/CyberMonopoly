@@ -11,6 +11,8 @@ var Market;
     Market["US"] = "US";
 })(Market || (exports.Market = Market = {}));
 function detectMarket(code) {
+    if (typeof code !== 'string')
+        code = String(code || '');
     const p = code.substring(0, 2);
     if (/^(60|68|51|50|52|56|58|11)$/.test(p))
         return Market.SH;

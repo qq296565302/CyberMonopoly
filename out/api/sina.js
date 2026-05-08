@@ -40,6 +40,8 @@ exports.getKlineData = getKlineData;
 exports.get7x24News = get7x24News;
 const https = __importStar(require("https"));
 function toSinaCode(code) {
+    if (typeof code !== 'string')
+        code = String(code || '');
     const prefix = code.substring(0, 2);
     if (/^(60|68|51|50|52|56|58)$/.test(prefix))
         return `sh${code}`;
@@ -93,17 +95,18 @@ async function getRealtimeQuote(code) {
     const f = match[1].split(',');
     const price = parseFloat(f[3]) || 0;
     const prevClose = parseFloat(f[2]) || 0;
+    const open = parseFloat(f[1]) || 0;
     return {
         name: f[0].trim(),
         code,
-        price,
-        open: parseFloat(f[1]) || 0,
+        price: price > 0 ? price : prevClose,
+        open,
         prevClose,
         high: parseFloat(f[4]) || 0,
         low: parseFloat(f[5]) || 0,
         volume: parseFloat(f[8]) || 0,
-        changePercent: prevClose > 0 ? ((price - prevClose) / prevClose * 100) : 0,
-        changeAmount: price - prevClose,
+        changePercent: (prevClose > 0 && price > 0) ? ((price - prevClose) / prevClose * 100) : 0,
+        changeAmount: price > 0 ? (price - prevClose) : 0,
         bid: parseFloat(f[6]) || 0,
         ask: parseFloat(f[7]) || 0,
         date: f[30] || '',
@@ -128,17 +131,18 @@ async function getBatchQuotes(codes) {
         const f = match[2].split(',');
         const price = parseFloat(f[3]) || 0;
         const prevClose = parseFloat(f[2]) || 0;
+        const open = parseFloat(f[1]) || 0;
         results.push({
             name: f[0].trim(),
             code,
-            price,
-            open: parseFloat(f[1]) || 0,
+            price: price > 0 ? price : prevClose,
+            open,
             prevClose,
             high: parseFloat(f[4]) || 0,
             low: parseFloat(f[5]) || 0,
             volume: parseFloat(f[8]) || 0,
-            changePercent: prevClose > 0 ? ((price - prevClose) / prevClose * 100) : 0,
-            changeAmount: price - prevClose,
+            changePercent: (prevClose > 0 && price > 0) ? ((price - prevClose) / prevClose * 100) : 0,
+            changeAmount: price > 0 ? (price - prevClose) : 0,
             bid: parseFloat(f[6]) || 0,
             ask: parseFloat(f[7]) || 0,
             date: f[30] || '',

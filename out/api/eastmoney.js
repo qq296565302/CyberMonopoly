@@ -38,6 +38,7 @@ exports.getResearchReports = getResearchReports;
 exports.getFinanceData = getFinanceData;
 exports.searchStocks = searchStocks;
 exports.getHotStocks = getHotStocks;
+exports.getFullKlineData = getFullKlineData;
 const https = __importStar(require("https"));
 const stock_1 = require("../models/stock");
 const emCache = new Map();
@@ -235,5 +236,55 @@ async function getHotStocks(count = 20, rankType = 'topGainers') {
         changeAmount: Number(item.f4) || 0,
         turnoverRate: Number(item.f8) || 0,
     }));
+}
+async function getFullKlineData(code) {
+    const market = (0, stock_1.detectMarket)(code);
+    const emMarket = market === 'SH' ? '1' : '0';
+    const secid = `${emMarket}.${code}`;
+    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?cb=&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&beg=19900101&end=20500101&lmt=100000&ut=fa5fd1943c7b386f172d6893dbfba10b&secid=${secid}&_=${Date.now()}`;
+    const buffer = await emFetch(url);
+    const text = buffer.toString('utf-8');
+    const data = JSON.parse(text);
+    const klines = data?.data?.klines || [];
+    if (klines.length === 0) {
+        return {
+            name: `${data?.data?.name || code} ${code}`,
+            data: [],
+            color: hashColor(code),
+            prevClose: data?.data?.prePrice || 0,
+            type: 'candlestick',
+        };
+    }
+    const points = klines.map(item => {
+        const parts = item.split(',');
+        const date = new Date(parts[0]);
+        return {
+            date,
+            value: parseFloat(parts[2] || '0'),
+            open: parseFloat(parts[1] || '0'),
+            high: parseFloat(parts[3] || '0'),
+            low: parseFloat(parts[4] || '0'),
+            close: parseFloat(parts[2] || '0'),
+            volume: parseFloat(parts[5] || '0'),
+            label: `${code} ${parts[0]}`,
+        };
+    });
+    return {
+        name: `${data?.data?.name || code} ${code}`,
+        data: points,
+        color: hashColor(code),
+        prevClose: data?.data?.prePrice || 0,
+        type: 'candlestick',
+    };
+}
+function hashColor(str) {
+    const colors = [
+        [86, 180, 233], [230, 159, 0], [0, 158, 115],
+        [204, 121, 167], [213, 94, 0], [240, 228, 66],
+    ];
+    let sum = 0;
+    for (let i = 0; i < str.length; i++)
+        sum += str.charCodeAt(i);
+    return colors[sum % colors.length];
 }
 //# sourceMappingURL=eastmoney.js.map

@@ -71,6 +71,8 @@ export class AlertManager {
       const rule = this.rules.get(q.code);
       if (!rule) continue;
       
+      if (q.price <= 0 || q.prevClose <= 0) continue;
+      
       if (now - rule.lastAlertTime < this.cooldownMs) continue;
       
       let shouldAlert = false;
