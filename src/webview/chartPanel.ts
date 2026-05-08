@@ -108,6 +108,7 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
       <option value="d30" selected>30日</option>
       <option value="d60">60日</option>
       <option value="d120">120日</option>
+      <option value="dall">全部</option>
     </select>
     <span class="sep"></span>
     <button id="btn-refresh" title="刷新">↻</button>
@@ -589,6 +590,11 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
           this.currentDays = 120;
           this.isCandlestick = true;
           await this.loadKline(120);
+          break;
+        case 'dall':
+          this.currentDays = 1023;
+          this.isCandlestick = true;
+          await this.loadKline(1023);
           break;
         case 'refresh':
           if (this.isCandlestick) await this.loadKline(this.currentDays);
