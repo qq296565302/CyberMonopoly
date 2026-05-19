@@ -51,55 +51,72 @@ function extractStockInfo(itemOrCode, name) {
 function registerWatchlistCommands(context, provider, chartView, detailPanel) {
     const disposables = [];
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.addToWatchlist', async () => {
-        while (true) {
-            const keyword = await vscode.window.showInputBox({
-                prompt: '输入股票代码或中文名称搜索（Esc退出）',
-                placeHolder: '例如: 600519 或 茅台',
-                title: '添加自选股',
-                ignoreFocusOut: true,
-            });
-            if (!keyword || !keyword.trim())
+        const quickPick = vscode.window.createQuickPick();
+        quickPick.title = '添加自选股';
+        quickPick.placeholder = '输入股票代码或中文名称搜索（支持模糊搜索）';
+        quickPick.ignoreFocusOut = true;
+        quickPick.matchOnDescription = true;
+        quickPick.matchOnDetail = true;
+        let searchTimeout;
+        quickPick.onDidChangeValue((value) => {
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            if (!value || !value.trim()) {
+                quickPick.items = [];
                 return;
-            let results = [];
-            try {
-                results = await (0, eastmoney_1.searchStocks)(keyword.trim());
             }
-            catch (e) {
-                vscode.window.showErrorMessage(`搜索失败: ${e}`);
-                continue;
-            }
-            const picks = results.map(r => ({
-                label: r.name,
-                description: r.code,
-                detail: `${r.type || '股票'}  ${r.market || ''}`,
-            }));
-            if (picks.length === 0 && /^\d{6}$/.test(keyword.trim())) {
-                picks.push({
-                    label: `直接添加 ${keyword.trim()}`,
-                    description: keyword.trim(),
-                    detail: '未找到匹配名称，按代码直接添加',
-                });
-            }
-            if (picks.length === 0) {
-                vscode.window.showWarningMessage('未找到匹配的股票，请重新输入');
-                continue;
-            }
-            const selected = await vscode.window.showQuickPick(picks, {
-                title: '添加自选股 - 选择股票（Esc返回搜索）',
-                placeHolder: '选择要添加的股票',
-                ignoreFocusOut: true,
-            });
+            // 防抖：300ms后触发搜索
+            searchTimeout = setTimeout(async () => {
+                quickPick.busy = true;
+                try {
+                    const results = await (0, eastmoney_1.searchStocks)(value.trim());
+                    const picks = results.map(r => ({
+                        label: r.name,
+                        description: r.code,
+                        detail: `${r.type || '股票'}  ${r.market || ''}`,
+                    }));
+                    if (picks.length === 0 && /^\d{6}$/.test(value.trim())) {
+                        picks.push({
+                            label: `直接添加 ${value.trim()}`,
+                            description: value.trim(),
+                            detail: '未找到匹配名称，按代码直接添加',
+                        });
+                    }
+                    quickPick.items = picks;
+                }
+                catch (e) {
+                    quickPick.items = [{
+                            label: '搜索失败',
+                            description: `${e}`,
+                            detail: '请重试',
+                        }];
+                }
+                finally {
+                    quickPick.busy = false;
+                }
+            }, 300);
+        });
+        quickPick.onDidAccept(async () => {
+            const selected = quickPick.selectedItems[0];
             if (!selected)
-                continue;
-            const code = selected.description || keyword.trim();
+                return;
+            const code = selected.description || quickPick.value.trim();
             const name = selected.label.includes('直接添加') ? '' : selected.label;
             await provider.addStock(code, name || undefined);
-            return;
-        }
+            quickPick.hide();
+        });
+        quickPick.onDidHide(() => {
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            quickPick.dispose();
+        });
+        quickPick.show();
     }));
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.removeFromWatchlist', async (item) => {
         if (item && item.stock) {
-            provider.removeStock(item.stock.code);
+            await provider.removeStock(item.stock.code);
         }
     }));
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.refreshQuotes', async () => {
@@ -149,6 +166,15 @@ function registerWatchlistCommands(context, provider, chartView, detailPanel) {
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.addHotToWatchlist', async (item) => {
         if (item?.hotStock) {
             await provider.addStock(item.hotStock.code, item.hotStock.name);
+        }
+        else if (item?.stock) {
+            await provider.addStock(item.stock.code, item.stock.name);
+        }
+        else if (item?.index) {
+            await provider.addStock(item.index.code, item.index.name);
+        }
+        else if (item?.sector) {
+            await provider.addStock(item.sector.code, item.sector.name);
         }
     }));
     disposables.push(vscode.commands.registerCommand('cyberMonopoly.openStockNews', (itemOrCode, name) => {

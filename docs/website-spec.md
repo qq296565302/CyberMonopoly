@@ -5,7 +5,9 @@
 > **目标用户**: A股投资者 / 上班族程序员
 
 ---
-
+sk-84zvzI8YviP3W9HF6d56043144B740119aD0356999127849
+https://api.edgefn.net/v1
+DeepSeek-R1-0528-Qwen3-8B
 ## 一、产品概览
 
 ### 1.1 一句话定位
@@ -21,14 +23,14 @@
 | 专业图表 | TradingView 同款 K 线图 / 分时图 + 成交量 |
 | 热门追踪 | 涨幅/跌幅/换手率三榜前 20 |
 | 智能提醒 | 价格目标 / 异动涨跌幅自动弹窗 |
-| AI 助手 | 内置 LLM 聊天，分析个股、解读行情 |
+| AI 助手 | Function Calling + 快捷指令，AI 主动查询实时数据并联动图表 |
 | 7x24 快讯 | 新浪财经实时快讯，侧边栏滚动 |
 | 个股深度 | 个股资讯/研报评级/财务数据 一站式查看 |
 | 老板键 | 一键隐蔽模式，降低画面饱和度，伪装输出日志 |
 
 ### 1.3 技术标签
 
-`VSCode Extension` · `TypeScript` · `TradingView Lightweight Charts` · `A股` · `实时行情` · `AI Chat`
+`VSCode Extension` · `TypeScript` · `TradingView Lightweight Charts` · `A股` · `实时行情` · `AI Chat` · `Function Calling` · `Streaming` · `Markdown` · `Quick Commands`
 
 ---
 
@@ -110,15 +112,30 @@
 
 ### 2.7 AI 助手
 
-**描述**: 内置 LLM 聊天面板，可直接在编辑器里和 AI 对话。
+**描述**: 内置 LLM 聊天面板，支持 Function Calling 和快捷指令，可直接在编辑器里和 AI 对话，AI 可主动调用工具查询实时数据并联动图表。
 
 - 快捷键 `Ctrl+Shift+A` 打开
 - 支持 OpenAI 兼容 API（可对接各种 LLM 服务）
+- **流式响应**：逐字输出，实时查看 AI 回复过程
+- **Markdown 渲染**：支持表格、列表、加粗、代码块等富文本格式
+- **Function Calling**：14 个内置工具，AI 可主动调用获取实时数据：
+  - 行情查询、K 线数据、分时数据、财务数据
+  - 大盘指数、涨跌分布、热门股票、板块行情
+  - 个股新闻、快讯、研报、搜索
+  - 图表触发（K 线图/分时图）
+- **快捷指令**：14 条 `/` 指令快速发起查询：
+  - `/行情` `/财报` `/K线` `/分时` `/大盘`
+  - `/热门` `/板块` `/新闻` `/快讯` `/研报`
+  - `/搜索` `/图表` `/帮助`
+- **图表联动**：AI 可自动打开 K 线图/分时图，实现对话与图表的无缝联动
+- **API Key 测试连接**：配置后可一键测试 LLM 服务连通性
+- **Token 上下文管理**：自动截断历史消息，防止超出模型上下文限制
+- **超时重试机制**：30 秒超时 + 1 次自动重试，提升稳定性
+- **安全防护**：Prompt Injection 防护 + HTTPS 强制校验
 - 自动注入用户自选股列表作为上下文
 - 聊天历史持久化存储（最近 50 条）
-- 可回答股市问题、解释术语、分析个股
 
-**网站展示建议**: 展示 AI 聊天界面截图，强调"边写代码边问 AI"
+**网站展示建议**: 展示 AI 聊天界面截图，强调"AI 主动调用工具查询实时数据"和"快捷指令一键查询"
 
 ### 2.8 异动提醒
 
@@ -291,6 +308,26 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | `Alt+Shift+B` | 切换老板键隐蔽模式 |
 | `F5` | 刷新当前行情（侧边栏聚焦时） |
 
+### AI 聊天快捷指令
+
+在 AI 聊天输入框中输入 `/` 可触发快捷指令：
+
+| 指令 | 功能 |
+|------|------|
+| `/行情 <股票>` | 查询个股实时行情 |
+| `/财报 <股票>` | 查询财务数据 |
+| `/K线 <股票>` | 查询 K 线数据 |
+| `/分时 <股票>` | 查询分时数据 |
+| `/大盘` | 查询大盘指数 |
+| `/热门` | 查询热门股票 |
+| `/板块` | 查询板块行情 |
+| `/新闻 <股票>` | 查询个股新闻 |
+| `/快讯` | 查询最新快讯 |
+| `/研报 <股票>` | 查询研报评级 |
+| `/搜索 <关键词>` | 搜索股票 |
+| `/图表 <股票>` | 打开 K 线图 |
+| `/帮助` | 查看所有指令 |
+
 ---
 
 ## 五、可配置项（适合放在网站设置/文档页）
@@ -301,9 +338,10 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 显示状态栏行情 | 开关 | 开启 | 底部状态栏滚动行情 |
 | 启用异动提醒 | 开关 | 开启 | 价格异动弹窗通知 |
 | 默认异动阈值 | 数字 | 5% | 涨跌幅超过此值触发提醒 |
-| LLM API 地址 | 文本 | - | OpenAI 兼容 API 端点 |
-| LLM API Key | 密文 | - | API 密钥 |
+| LLM API 地址 | 文本 | - | OpenAI 兼容 API 端点（必须 HTTPS） |
+| LLM API Key | 密文 | - | API 密钥，支持一键测试连接 |
 | LLM 模型名称 | 文本 | gpt-3.5-turbo | 模型标识 |
+| LLM 请求超时 | 数字 | 30 秒 | 超时后自动重试 1 次 |
 | 老板键启用 | 开关 | 开启 | 是否启用老板键功能 |
 | 老板键饱和度 | 数字 | 10% | 隐蔽模式的饱和度，0=全灰 |
 | 涨跌颜色主题 | 选项 | A股风格 | A股(红涨绿跌) / 美股(绿涨红跌) |
@@ -324,7 +362,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 研报评级 | 东方财富 | 否 |
 | 财务数据 | 东方财富 | 否 |
 | 热门股票 | 东方财富 | 否 |
-| AI 对话 | 用户自配 LLM | 需要 |
+| AI 对话 | 用户自配 LLM（支持 Function Calling） | 需要 |
 
 ---
 
@@ -373,7 +411,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 
 **辅助说明**:
 ```
-免费 · 开源 · 无需 API Key · 实时行情 · AI 助手
+免费 · 开源 · 无需 API Key · 实时行情 · AI 助手 · Function Calling · 快捷指令
 ```
 
 ### 7.3 功能卡片文案
@@ -384,7 +422,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 📈 | 专业 K 线 | TradingView 同款蜡烛图 + 分时图 + 成交量 |
 | 🔥 | 热门追踪 | 涨幅/跌幅/换手率三榜前 20，发现市场热点 |
 | 📰 | 7x24 快讯 | 新浪财经实时快讯，不错过任何重要消息 |
-| 🤖 | AI 助手 | 内置 LLM 聊天，问个股、聊行情、学投资 |
+| 🤖 | AI 助手 | Function Calling + 快捷指令，AI 主动查询行情/财报/研报，一句话搞定 |
 | 🔔 | 智能提醒 | 价格目标/涨跌异动自动弹窗，交易时段精准提醒 |
 | 👁 | 老板键 | 一键隐蔽模式，画面降饱和，老板从背后走过也不怕 |
 | 📋 | 个股深度 | 资讯/研报/财务数据一站式查看，快速了解个股基本面 |
@@ -401,6 +439,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 操作系统 | Windows / macOS / Linux |
 | Node.js | 使用 VSCode 内置 Node.js |
 | 图表库 | TradingView Lightweight Charts 4.x |
+| Markdown 渲染 | marked（AI 回复富文本渲染） |
 | 编码库 | iconv-lite（处理新浪 GBK 编码） |
 | 包大小 | < 500KB（不含图表库 ~100KB） |
 
@@ -431,7 +470,7 @@ src/
 ```html
 <title>赛博大富翁 - 藏在 VSCode 里的 A 股行情工具</title>
 <meta name="description" content="免费开源的 VSCode 扩展，实时 A 股行情、K 线图、AI 助手、老板键隐蔽模式。看起来像在写代码，实际上在看盘。">
-<meta name="keywords" content="VSCode, A股, 股票, 行情, K线, AI, 老板键, 看盘, 扩展">
+<meta name="keywords" content="VSCode, A股, 股票, 行情, K线, AI, 老板键, 看盘, 扩展, Function Calling, 快捷指令">
 
 <!-- Open Graph -->
 <meta property="og:title" content="赛博大富翁 - 藏在 VSCode 里的 A 股行情工具">
@@ -472,7 +511,7 @@ src/
 
 | 项目 | 值 |
 |------|-----|
-| 当前版本 | 1.0.0 |
+| 当前版本 | 1.2.0 |
 | 许可证 | MIT |
 | VSCode 最低版本 | 1.85.0 |
 | 语言 | TypeScript |

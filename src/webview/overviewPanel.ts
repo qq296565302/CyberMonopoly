@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
 import { WatchlistProvider } from '../provider/watchlistProvider';
+import { getNonce, buildCspContent } from '../utils/nonce';
 
 export class OverviewPanel {
   private panel: vscode.WebviewPanel | undefined;
   private refreshListener: vscode.Disposable | undefined;
+  private bossEnabled = true;
+  private bossSaturation = 10;
 
   constructor(private provider: WatchlistProvider) {
     this.refreshListener = provider.onDidChangeTreeData(() => {
@@ -19,6 +22,8 @@ export class OverviewPanel {
     if (this.panel) {
       this.panel.reveal(vscode.ViewColumn.Beside);
       this.refreshContent();
+      // 重新应用老板模式状态
+      this.applyBossMode();
       return;
     }
 
@@ -36,16 +41,28 @@ export class OverviewPanel {
     this.panel.webview.html = this.getWebviewContent();
     this.setupMessageHandler();
     this.refreshContent();
+
+    // 应用老板模式状态
+    this.applyBossMode();
+  }
+
+  private applyBossMode(): void {
+    if (this.panel) {
+      this.panel.webview.postMessage({ type: 'bossMode', enabled: this.bossEnabled, saturation: this.bossSaturation });
+    }
   }
 
   private getWebviewContent(): string {
+    const nonce = getNonce();
+    const bossInitEnabled = this.bossEnabled;
+    const bossInitSaturation = this.bossSaturation;
     return /*html*/ `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${buildCspContent(nonce)}">
+  <style nonce="${nonce}">
     body { margin: 0; padding: 16px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
     h2 { margin: 0 0 12px 0; font-size: 16px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -60,8 +77,13 @@ export class OverviewPanel {
 <body>
   <h2>行情概览</h2>
   <div id="content"><div class="loading">加载中...</div></div>
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    let currentBossEnabled = ${bossInitEnabled};
+    let currentBossSaturation = ${bossInitSaturation};
+    if (currentBossEnabled) {
+      document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
+    }
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     window.addEventListener('message', event => {
       const msg = event.data;
@@ -81,6 +103,8 @@ export class OverviewPanel {
         html += '</table>';
         document.getElementById('content').innerHTML = html;
       } else if (msg.type === 'bossMode') {
+        currentBossEnabled = msg.enabled;
+        currentBossSaturation = msg.saturation;
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });
@@ -105,6 +129,8 @@ export class OverviewPanel {
   }
 
   setBossMode(enabled: boolean, saturation: number): void {
+    this.bossEnabled = enabled;
+    this.bossSaturation = saturation;
     if (this.panel) {
       this.panel.webview.postMessage({ type: 'bossMode', enabled, saturation });
     }

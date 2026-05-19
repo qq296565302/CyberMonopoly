@@ -2,15 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { getKlineData, getIntradayData } from '../api/sina';
 import { getFullKlineData } from '../api/eastmoney';
-
-function getNonce(): string {
-  let text = '';
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
-}
+import { getNonce, buildCspContent } from '../utils/nonce';
 
 export class ChartViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -18,7 +10,7 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
   private currentName = '';
   private isCandlestick = true;
   private currentDays = 30;
-  private bossEnabled = false;
+  private bossEnabled = true;
   private bossSaturation = 10;
 
   constructor(private context: vscode.ExtensionContext) {}
@@ -37,10 +29,6 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.getWebviewContent(webviewView.webview);
     this.setupMessageHandler();
-
-    if (this.bossEnabled) {
-      this.view.webview.postMessage({ type: 'bossMode', enabled: true, saturation: this.bossSaturation });
-    }
   }
 
   async show(code: string, name: string) {
@@ -54,6 +42,7 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
     }
     this.currentCode = code;
     this.currentName = name;
+    this.isCandlestick = true;
 
     if (this.view) {
       this.view.title = `${name} (${code})`;
@@ -64,6 +53,8 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
 
   private getWebviewContent(webview: vscode.Webview): string {
     const nonce = getNonce();
+    const bossInitEnabled = this.bossEnabled;
+    const bossInitSaturation = this.bossSaturation;
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.file(path.join(this.context.extensionPath, 'assets', 'lightweight-charts.standalone.production.js'))
     );
@@ -73,8 +64,8 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' ${webview.cspSource}; style-src 'unsafe-inline';">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${buildCspContent(nonce, webview.cspSource)}">
+  <style nonce="${nonce}">
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
     .toolbar { display: flex; gap: 4px; padding: 3px 8px; border-bottom: 1px solid var(--vscode-panel-border); align-items: center; flex-wrap: wrap; }
     .toolbar button, .toolbar select {
@@ -136,11 +127,19 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
     let volChart = null;
     let mainSeries = null;
     let volumeSeries = null;
+    let percentSeries = null;
     let chartType = 'candlestick';
     let currentRawData = [];
     let prevClose = 0;
     let syncingTimeScale = false;
     let $infoPanel = document.getElementById('info-panel');
+    let currentBossEnabled = ${bossInitEnabled};
+    let currentBossSaturation = ${bossInitSaturation};
+    if (currentBossEnabled) {
+      document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
+      var _initBossBtn = document.getElementById('btn-boss');
+      if (_initBossBtn) { _initBossBtn.classList.add('active-boss'); _initBossBtn.setAttribute('title', '隐蔽模式 - 点击关闭'); }
+    }
 
     function getLayoutOpts() {
       var bg = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background').trim();
@@ -199,6 +198,7 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
         priceChart = LightweightCharts.createChart(priceContainer, {
           layout: getLayoutOpts(),
           grid: getGridOpts(),
+          leftPriceScale: { visible: true, borderColor: 'rgba(128,128,128,0.3)' },
           rightPriceScale: { borderColor: 'rgba(128,128,128,0.3)' },
           timeScale: { borderColor: 'rgba(128,128,128,0.3)', timeVisible: false, secondsVisible: false },
           crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
@@ -342,10 +342,12 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
     function destroyCharts() {
       if (mainSeries && priceChart) { try { priceChart.removeSeries(mainSeries); } catch(e) {} }
       if (volumeSeries && volChart) { try { volChart.removeSeries(volumeSeries); } catch(e) {} }
+      if (percentSeries && priceChart) { try { priceChart.removeSeries(percentSeries); } catch(e) {} }
       if (priceChart) { priceChart.remove(); priceChart = null; }
       if (volChart) { volChart.remove(); volChart = null; }
       mainSeries = null;
       volumeSeries = null;
+      percentSeries = null;
     }
 
     function renderCandlestick(data) {
@@ -359,10 +361,12 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
       if (!ensureCharts()) return;
       if (mainSeries) { priceChart.removeSeries(mainSeries); mainSeries = null; }
       if (volumeSeries) { volChart.removeSeries(volumeSeries); volumeSeries = null; }
+      if (percentSeries) { priceChart.removeSeries(percentSeries); percentSeries = null; }
       chartType = 'candlestick';
       currentRawData = data;
 
       priceChart.applyOptions({
+        leftPriceScale: { visible: false, borderColor: 'rgba(128,128,128,0.3)' },
         timeScale: {
           timeVisible: false,
           secondsVisible: false,
@@ -382,6 +386,7 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
             }
             return String(time);
           },
+          priceFormatter: function(price) { return price.toFixed(2); },
         },
       });
 
@@ -425,22 +430,13 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
       if (!ensureCharts()) return;
       if (mainSeries) { priceChart.removeSeries(mainSeries); mainSeries = null; }
       if (volumeSeries) { volChart.removeSeries(volumeSeries); volumeSeries = null; }
+      if (percentSeries) { priceChart.removeSeries(percentSeries); percentSeries = null; }
       chartType = 'line';
       currentRawData = data;
       prevClose = prevCloseVal || 0;
 
       priceChart.applyOptions({
-        timeScale: {
-          timeVisible: true,
-          secondsVisible: false,
-          tickMarkFormatter: function(time) {
-            if (typeof time === 'number') {
-              var d = new Date(time * 1000);
-              return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-            }
-            return '';
-          },
-        },
+        leftPriceScale: { visible: true, borderColor: 'rgba(128,128,128,0.3)' },
         localization: {
           timeFormatter: function(time) {
             if (typeof time === 'number') {
@@ -453,30 +449,107 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
             return String(time);
           },
         },
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          tickMarkFormatter: function(time) {
+            if (typeof time === 'number') {
+              var d = new Date(time * 1000);
+              return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+            }
+            return '';
+          },
+        },
       });
-
-      mainSeries = priceChart.addLineSeries({
-        color: '#3b82f6', lineWidth: 2,
-        lastValueVisible: true, priceLineVisible: true,
-        baseValue: { type: 'price', price: prevClose || (data.length > 0 ? data[0].value : 0) },
-      });
-
-      var formatted = data.map(function(d) {
-        var dt = new Date(d.date);
-        return { time: Math.floor(dt.getTime() / 1000), value: d.value };
-      }).filter(function(d) { return d.value != null && d.value > 0; });
-      mainSeries.setData(formatted);
 
       var basePrice = prevClose || (data.length > 0 ? data[0].value : 0);
+      var rawData = data.filter(function(d) { return d.value != null && d.value > 0; });
+      // 根据最新价格决定整条线颜色
+      var lastValue = rawData.length > 0 ? rawData[rawData.length - 1].value : 0;
+      var lineColor = lastValue >= basePrice ? '#ef4444' : '#22c55e'; // 涨红跌绿
+
+      mainSeries = priceChart.addLineSeries({
+        color: lineColor, lineWidth: 2,
+        lastValueVisible: true, priceLineVisible: false,
+        priceScaleId: 'right',
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+        baseValue: { type: 'price', price: basePrice },
+      });
+
+      var formatted = rawData.map(function(d) {
+        var dt = new Date(d.date);
+        return { time: Math.floor(dt.getTime() / 1000), value: d.value };
+      });
+      mainSeries.setData(formatted);
+
+      // 在0%位置（昨收价）添加水平虚线
+      if (basePrice > 0) {
+        mainSeries.createPriceLine({
+          price: basePrice,
+          color: 'rgba(128,128,128,0.5)',
+          lineWidth: 1,
+          lineStyle: 2, // 虚线
+          axisLabelVisible: false,
+        });
+      }
+
+      // 左侧百分比Y轴
+      var percentData = [];
+      for (var pi = 0; pi < data.length; pi++) {
+        var pd = data[pi];
+        if (pd.value != null && pd.value > 0 && basePrice > 0) {
+          var dtP = new Date(pd.date);
+          percentData.push({
+            time: Math.floor(dtP.getTime() / 1000),
+            value: (pd.value - basePrice) / basePrice * 100,
+          });
+        }
+      }
+      if (percentData.length > 0) {
+        var sm = { top: 0.1, bottom: 0.1 };
+        priceChart.priceScale('left').applyOptions({
+          scaleMargins: sm,
+          borderVisible: false,
+          ticksVisible: true,
+          entireTextOnly: false,
+        });
+        priceChart.priceScale('right').applyOptions({ scaleMargins: sm });
+        percentSeries = priceChart.addLineSeries({
+          priceScaleId: 'left',
+          color: 'transparent',
+          lineWidth: 1,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          priceFormat: {
+            type: 'custom',
+            formatter: function(price) {
+              var sign = price >= 0 ? '+' : '';
+              return sign + price.toFixed(2) + '%';
+            },
+          },
+        });
+        percentSeries.setData(percentData);
+      }
       var volData = [];
       var prevVol = 0;
       var prevVal = basePrice;
       for (var i = 0; i < data.length; i++) {
         var d = data[i];
-        var cumVol = d.volume || 0;
-        var incVol = i === 0 ? cumVol : cumVol - prevVol;
-        if (incVol < 0) incVol = cumVol;
-        prevVol = cumVol;
+        var cumVol = typeof d.volume === 'number' && isFinite(d.volume) ? d.volume : 0;
+        var incVol;
+        if (i === 0) {
+          incVol = cumVol;
+        } else {
+          incVol = cumVol - prevVol;
+          if (incVol < 0) {
+            // 数据异常：累计量下降，重置基准并跳过该点
+            incVol = 0;
+            prevVol = cumVol;
+          } else {
+            prevVol = cumVol;
+          }
+        }
         var dt = new Date(d.date);
         var ts = Math.floor(dt.getTime() / 1000);
         var isUp = d.value >= prevVal;
@@ -509,16 +582,21 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
 
       if (msg.type === 'candlestick') {
         renderCandlestick(msg.data);
+        setActiveBtn('kline');
       } else if (msg.type === 'line') {
         renderLine(msg.data, msg.prevClose);
+        setActiveBtn('intraday');
       } else if (msg.type === 'error') {
         document.getElementById('price-container').innerHTML =
           '<div class="loading">加载失败: ' + (msg.message || '未知错误') + '</div>';
         priceChart = null;
         mainSeries = null;
+        percentSeries = null;
         volChart = null;
         volumeSeries = null;
       } else if (msg.type === 'bossMode') {
+        currentBossEnabled = msg.enabled;
+        currentBossSaturation = msg.saturation;
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
         var bossBtn = document.getElementById('btn-boss');
         if (bossBtn) {
@@ -626,7 +704,9 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
     try {
       let series;
       if (days >= 1023) {
-        series = await getFullKlineData(this.currentCode);
+        // 歧义代码（如 000001 同时对应上证指数和平安银行）默认查询个股
+        const ambiguousCodes = new Set(['000001']);
+        series = await getFullKlineData(this.currentCode, ambiguousCodes.has(this.currentCode));
       } else {
         series = await getKlineData(this.currentCode, days);
       }

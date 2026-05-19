@@ -3,6 +3,9 @@ import * as https from 'https';
 import * as http from 'http';
 import { getStockNews, getResearchReports, getFinanceData } from '../api/eastmoney';
 import type { StockNewsItem, ResearchReport, FinanceIndicator } from '../api/eastmoney';
+import { getRealtimeQuote } from '../api/sina';
+import type { RealtimeQuote } from '../api/sina';
+import { getNonce, buildCspContent } from '../utils/nonce';
 
 export class StockDetailPanel {
   private panel: vscode.WebviewPanel | undefined;
@@ -11,8 +14,8 @@ export class StockDetailPanel {
   private newsCache = new Map<string, StockNewsItem[]>();
   private reportCache = new Map<string, ResearchReport[]>();
   private financeCache = new Map<string, FinanceIndicator[]>();
-  private bossEnabled = false;
-  private bossSaturation = 100;
+  private bossEnabled = true;
+  private bossSaturation = 10;
 
   show(code: string, name: string, tab?: string) {
     this.currentCode = code;
@@ -22,6 +25,8 @@ export class StockDetailPanel {
       this.panel.title = `${name} (${code}) - 详情`;
       this.panel.reveal(vscode.ViewColumn.Active);
       this.panel.webview.postMessage({ type: 'switchStock', code, name, tab: tab || 'news' });
+      // 重新应用老板模式状态
+      this.applyBossMode();
       return;
     }
 
@@ -39,8 +44,13 @@ export class StockDetailPanel {
     this.panel.webview.html = this.getWebviewContent();
     this.setupMessageHandler();
     this.panel.webview.postMessage({ type: 'switchStock', code, name, tab: tab || 'news' });
-    if (this.bossEnabled) {
-      this.panel.webview.postMessage({ type: 'bossMode', enabled: true, saturation: this.bossSaturation });
+    // 应用老板模式状态
+    this.applyBossMode();
+  }
+
+  private applyBossMode(): void {
+    if (this.panel) {
+      this.panel.webview.postMessage({ type: 'bossMode', enabled: this.bossEnabled, saturation: this.bossSaturation });
     }
   }
 
@@ -48,12 +58,78 @@ export class StockDetailPanel {
     this.panel!.webview.onDidReceiveMessage(async (msg) => {
       if (msg.type === 'loadData') {
         await this.loadData(msg.code, msg.tab, msg.page || 1);
+      } else if (msg.type === 'loadQuote') {
+        await this.loadQuote(msg.code);
       } else if (msg.type === 'fetchNewsDetail') {
         await this.fetchNewsDetail(msg.url, msg.title, msg.source, msg.time);
       } else if (msg.type === 'openUrl') {
         vscode.env.openExternal(vscode.Uri.parse(msg.url));
       }
     });
+  }
+
+  private async loadQuote(code: string) {
+    const panel = this.panel;
+    if (!panel) return;
+
+    try {
+      const quote = await getRealtimeQuote(code);
+      // 计算涨停跌停价
+      const limitPrices = this.calculateLimitPrices(code, quote.prevClose);
+      panel.webview.postMessage({
+        type: 'quoteData',
+        quote,
+        limitPrices,
+      });
+    } catch (e: any) {
+      panel.webview.postMessage({
+        type: 'quoteError',
+        message: String(e?.message || e),
+      });
+    }
+  }
+
+  private calculateLimitPrices(code: string, prevClose: number): {
+    limitUp: number;
+    limitDown: number;
+    limitUp10: number;
+    limitDown10: number;
+    limitUp15: number;
+    limitDown15: number;
+    limitUp20: number;
+    limitDown20: number;
+    isGemOrStar: boolean;
+  } {
+    // 判断是否为创业板（300开头）或科创板（688开头）
+    const isGemOrStar = code.startsWith('300') || code.startsWith('688');
+    const limitRate = isGemOrStar ? 0.2 : 0.1;
+
+    const limitUp = Math.round(prevClose * (1 + limitRate) * 100) / 100;
+    const limitDown = Math.round(prevClose * (1 - limitRate) * 100) / 100;
+
+    // +10% 和 -10% 的价格
+    const limitUp10 = Math.round(prevClose * 1.1 * 100) / 100;
+    const limitDown10 = Math.round(prevClose * 0.9 * 100) / 100;
+
+    // +15% 和 -15% 的价格
+    const limitUp15 = Math.round(prevClose * 1.15 * 100) / 100;
+    const limitDown15 = Math.round(prevClose * 0.85 * 100) / 100;
+
+    // +20% 和 -20% 的价格
+    const limitUp20 = Math.round(prevClose * 1.2 * 100) / 100;
+    const limitDown20 = Math.round(prevClose * 0.8 * 100) / 100;
+
+    return {
+      limitUp,
+      limitDown,
+      limitUp10,
+      limitDown10,
+      limitUp15,
+      limitDown15,
+      limitUp20,
+      limitDown20,
+      isGemOrStar,
+    };
   }
 
   private async fetchNewsDetail(url: string, title: string, source: string, time: string) {
@@ -189,15 +265,33 @@ export class StockDetailPanel {
   }
 
   private getWebviewContent(): string {
+    const nonce = getNonce();
+    const bossInitEnabled = this.bossEnabled;
+    const bossInitSaturation = this.bossSaturation;
     return /*html*/ `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${buildCspContent(nonce)}">
+  <style nonce="${nonce}">
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); display: flex; flex-direction: column; box-sizing: border-box; }
     #header { padding: 12px 16px 0; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
     #stock-name { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+    #quote-panel { display: none; margin-bottom: 12px; padding: 12px; background: var(--vscode-editor-inactiveSelectionBackground, rgba(0,0,0,0.05)); border-radius: 6px; }
+    #quote-panel.visible { display: block; }
+    .quote-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+    .quote-price { font-size: 24px; font-weight: 700; }
+    .quote-change { font-size: 14px; font-weight: 500; }
+    .quote-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; font-size: 12px; }
+    .quote-item { display: flex; justify-content: space-between; }
+    .quote-label { color: var(--vscode-descriptionForeground); }
+    .quote-value { font-weight: 500; }
+    .price-up { color: #ef4444; }
+    .price-down { color: #22c55e; }
+    .price-flat { color: var(--vscode-foreground); }
+    .limit-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--vscode-panel-border); }
+    .limit-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--vscode-descriptionForeground); }
+    .limit-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 16px; font-size: 12px; }
     #tabs { display: flex; gap: 0; }
     .tab { padding: 8px 20px; cursor: pointer; font-size: 13px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; color: var(--vscode-descriptionForeground); background: transparent; transition: all 0.15s; }
     .tab:hover { color: var(--vscode-foreground); background: var(--vscode-editor-inactiveSelectionBackground); }
@@ -263,6 +357,46 @@ export class StockDetailPanel {
 <body>
   <div id="header">
     <div id="stock-name">--</div>
+    <div id="quote-panel">
+      <div class="quote-header">
+        <span class="quote-price" id="q-price">--</span>
+        <span class="quote-change" id="q-change">--</span>
+      </div>
+      <div class="quote-grid">
+        <div class="quote-item"><span class="quote-label">今开</span><span class="quote-value" id="q-open">--</span></div>
+        <div class="quote-item"><span class="quote-label">昨收</span><span class="quote-value" id="q-prev">--</span></div>
+        <div class="quote-item"><span class="quote-label">最高</span><span class="quote-value" id="q-high">--</span></div>
+        <div class="quote-item"><span class="quote-label">最低</span><span class="quote-value" id="q-low">--</span></div>
+        <div class="quote-item"><span class="quote-label">成交量</span><span class="quote-value" id="q-vol">--</span></div>
+        <div class="quote-item"><span class="quote-label">涨跌额</span><span class="quote-value" id="q-amount">--</span></div>
+        <div class="quote-item"><span class="quote-label">买一</span><span class="quote-value" id="q-bid">--</span></div>
+        <div class="quote-item"><span class="quote-label">卖一</span><span class="quote-value" id="q-ask">--</span></div>
+        <div class="quote-item"><span class="quote-label">换手率</span><span class="quote-value" id="q-turnover-rate">--</span></div>
+        <div class="quote-item"><span class="quote-label">成交额</span><span class="quote-value" id="q-turnover">--</span></div>
+        <div class="quote-item"><span class="quote-label">市盈(动)</span><span class="quote-value" id="q-pe">--</span></div>
+        <div class="quote-item"><span class="quote-label">市净率</span><span class="quote-value" id="q-pb">--</span></div>
+        <div class="quote-item"><span class="quote-label">总市值</span><span class="quote-value" id="q-total-cap">--</span></div>
+        <div class="quote-item"><span class="quote-label">流通市值</span><span class="quote-value" id="q-float-cap">--</span></div>
+      </div>
+      <div class="limit-section">
+        <div class="limit-title">涨跌停价格</div>
+        <div class="limit-grid">
+          <div class="quote-item"><span class="quote-label">涨停</span><span class="quote-value price-up" id="q-limit-up">--</span></div>
+          <div class="quote-item"><span class="quote-label">跌停</span><span class="quote-value price-down" id="q-limit-down">--</span></div>
+        </div>
+      </div>
+      <div class="limit-section" id="gem-star-section" style="display:none">
+        <div class="limit-title">创业板/科创板涨跌幅参考</div>
+        <div class="limit-grid">
+          <div class="quote-item"><span class="quote-label">+10%</span><span class="quote-value price-up" id="q-up10">--</span></div>
+          <div class="quote-item"><span class="quote-label">-10%</span><span class="quote-value price-down" id="q-down10">--</span></div>
+          <div class="quote-item"><span class="quote-label">+15%</span><span class="quote-value price-up" id="q-up15">--</span></div>
+          <div class="quote-item"><span class="quote-label">-15%</span><span class="quote-value price-down" id="q-down15">--</span></div>
+          <div class="quote-item"><span class="quote-label">+20%</span><span class="quote-value price-up" id="q-up20">--</span></div>
+          <div class="quote-item"><span class="quote-label">-20%</span><span class="quote-value price-down" id="q-down20">--</span></div>
+        </div>
+      </div>
+    </div>
     <div id="tabs">
       <div class="tab active" data-tab="news">资讯</div>
       <div class="tab" data-tab="report">研报</div>
@@ -271,8 +405,13 @@ export class StockDetailPanel {
   </div>
   <div id="content"><div class="loading">加载中...</div></div>
 
-  <script>
+  <script nonce="${nonce}">
     var vscode = acquireVsCodeApi();
+    var currentBossEnabled = ${bossInitEnabled};
+    var currentBossSaturation = ${bossInitSaturation};
+    if (currentBossEnabled) {
+      document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
+    }
     var currentCode = '';
     var currentName = '';
     var currentTab = 'news';
@@ -284,6 +423,7 @@ export class StockDetailPanel {
     var \$tabs = document.querySelectorAll('.tab');
     var \$content = document.getElementById('content');
     var \$stockName = document.getElementById('stock-name');
+    var \$quotePanel = document.getElementById('quote-panel');
 
     \$tabs.forEach(function(t) {
       t.addEventListener('click', function() {
@@ -303,6 +443,8 @@ export class StockDetailPanel {
       currentCode = code;
       currentName = name;
       \$stockName.textContent = name + ' (' + code + ')';
+      \$quotePanel.classList.remove('visible');
+      vscode.postMessage({ type: 'loadQuote', code: code });
       switchTab(tab || 'news');
     }
 
@@ -323,6 +465,67 @@ export class StockDetailPanel {
     function escHtml(s) {
       if (!s) return '';
       return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function formatVolume(vol) {
+      if (vol >= 100000000) return (vol / 100000000).toFixed(2) + '亿';
+      if (vol >= 10000) return (vol / 10000).toFixed(0) + '万';
+      return String(vol);
+    }
+
+    function formatMoney(amount) {
+      if (amount >= 100000000) return (amount / 100000000).toFixed(2) + '亿';
+      if (amount >= 10000) return (amount / 10000).toFixed(0) + '万';
+      return amount.toFixed(2);
+    }
+
+    function renderQuote(quote, limitPrices) {
+      \$quotePanel.classList.add('visible');
+
+      var price = quote.price;
+      var prevClose = quote.prevClose;
+      var changePercent = quote.changePercent;
+      var changeAmount = quote.changeAmount;
+      var sign = changePercent >= 0 ? '+' : '';
+      var priceClass = changePercent > 0 ? 'price-up' : (changePercent < 0 ? 'price-down' : 'price-flat');
+
+      document.getElementById('q-price').textContent = price.toFixed(2);
+      document.getElementById('q-price').className = 'quote-price ' + priceClass;
+      document.getElementById('q-change').innerHTML = sign + changePercent.toFixed(2) + '%  ' + sign + changeAmount.toFixed(2);
+      document.getElementById('q-change').className = 'quote-change ' + priceClass;
+
+      document.getElementById('q-open').textContent = quote.open.toFixed(2);
+      document.getElementById('q-open').className = 'quote-value ' + (quote.open > prevClose ? 'price-up' : (quote.open < prevClose ? 'price-down' : 'price-flat'));
+      document.getElementById('q-prev').textContent = prevClose.toFixed(2);
+      document.getElementById('q-high').textContent = quote.high.toFixed(2);
+      document.getElementById('q-high').className = 'quote-value ' + (quote.high > prevClose ? 'price-up' : (quote.high < prevClose ? 'price-down' : 'price-flat'));
+      document.getElementById('q-low').textContent = quote.low.toFixed(2);
+      document.getElementById('q-low').className = 'quote-value ' + (quote.low > prevClose ? 'price-up' : (quote.low < prevClose ? 'price-down' : 'price-flat'));
+      document.getElementById('q-vol').textContent = formatVolume(quote.volume);
+      document.getElementById('q-amount').innerHTML = '<span class="' + priceClass + '">' + sign + changeAmount.toFixed(2) + '</span>';
+      document.getElementById('q-bid').textContent = quote.bid.toFixed(2);
+      document.getElementById('q-ask').textContent = quote.ask.toFixed(2);
+      document.getElementById('q-turnover-rate').textContent = quote.turnoverRate ? quote.turnoverRate.toFixed(2) + '%' : '--';
+      document.getElementById('q-turnover').textContent = quote.turnover ? formatMoney(quote.turnover) : '--';
+      document.getElementById('q-pe').textContent = quote.pe ? quote.pe.toFixed(2) : '--';
+      document.getElementById('q-pb').textContent = quote.pb ? quote.pb.toFixed(2) : '--';
+      document.getElementById('q-total-cap').textContent = quote.totalMarketCap ? formatMoney(quote.totalMarketCap) : '--';
+      document.getElementById('q-float-cap').textContent = quote.floatMarketCap ? formatMoney(quote.floatMarketCap) : '--';
+
+      document.getElementById('q-limit-up').textContent = limitPrices.limitUp.toFixed(2);
+      document.getElementById('q-limit-down').textContent = limitPrices.limitDown.toFixed(2);
+
+      if (limitPrices.isGemOrStar) {
+        document.getElementById('gem-star-section').style.display = '';
+        document.getElementById('q-up10').textContent = limitPrices.limitUp10.toFixed(2);
+        document.getElementById('q-down10').textContent = limitPrices.limitDown10.toFixed(2);
+        document.getElementById('q-up15').textContent = limitPrices.limitUp15.toFixed(2);
+        document.getElementById('q-down15').textContent = limitPrices.limitDown15.toFixed(2);
+        document.getElementById('q-up20').textContent = limitPrices.limitUp20.toFixed(2);
+        document.getElementById('q-down20').textContent = limitPrices.limitDown20.toFixed(2);
+      } else {
+        document.getElementById('gem-star-section').style.display = 'none';
+      }
     }
 
     function colorNum(val) {
@@ -521,6 +724,10 @@ export class StockDetailPanel {
       var msg = event.data;
       if (msg.type === 'switchStock') {
         switchStock(msg.code, msg.name, msg.tab);
+      } else if (msg.type === 'quoteData') {
+        renderQuote(msg.quote, msg.limitPrices);
+      } else if (msg.type === 'quoteError') {
+        \$quotePanel.classList.remove('visible');
       } else if (msg.type === 'newsData') {
         renderNews(msg.data, msg.page);
       } else if (msg.type === 'reportData') {
@@ -535,6 +742,8 @@ export class StockDetailPanel {
       } else if (msg.type === 'error') {
         \$content.innerHTML = '<div class="error">\u52a0\u8f7d\u5931\u8d25: ' + escHtml(msg.message) + '</div>';
       } else if (msg.type === 'bossMode') {
+        currentBossEnabled = msg.enabled;
+        currentBossSaturation = msg.saturation;
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });

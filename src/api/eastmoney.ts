@@ -276,10 +276,34 @@ export async function getHotStocks(count = 20, rankType: HotStockRankType = 'top
   }));
 }
 
-export async function getFullKlineData(code: string): Promise<DataSeries> {
-  const market = detectMarket(code);
-  const emMarket = market === 'SH' ? '1' : '0';
-  const secid = `${emMarket}.${code}`;
+// 指数 secid 映射表：code -> eastmoney secid
+const INDEX_SECID_MAP: Record<string, string> = {
+  // A股指数
+  '000001': '1.000001',   // 上证指数
+  '399001': '0.399001',   // 深证成指
+  '399006': '0.399006',   // 创业板指
+  '000300': '1.000300',   // 沪深300
+  '000016': '1.000016',   // 上证50
+  '000905': '1.000905',   // 中证500
+  '000852': '1.000852',   // 中证1000
+  '399005': '0.399005',   // 中小100
+  // 港股指数
+  'HSI':    '100.HSI',    // 恒生指数
+  'HSCEI':  '100.HSCEI',  // 恒生国企指数
+  'HSTECH': '100.HSTECH', // 恒生科技指数
+  // 北证指数
+  '899050': '0.899050',   // 北证50
+};
+
+export async function getFullKlineData(code: string, preferStock?: boolean): Promise<DataSeries> {
+  let secid: string;
+  if (!preferStock && INDEX_SECID_MAP[code]) {
+    secid = INDEX_SECID_MAP[code];
+  } else {
+    const market = detectMarket(code);
+    const emMarket = market === 'SH' ? '1' : '0';
+    secid = `${emMarket}.${code}`;
+  }
   const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?cb=&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&beg=19900101&end=20500101&lmt=100000&ut=fa5fd1943c7b386f172d6893dbfba10b&secid=${secid}&_=${Date.now()}`;
   const buffer = await emFetch(url);
   const text = buffer.toString('utf-8');

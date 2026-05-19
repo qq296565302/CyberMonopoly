@@ -36,12 +36,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.NewsViewProvider = void 0;
 const vscode = __importStar(require("vscode"));
 const sina_1 = require("../api/sina");
+const nonce_1 = require("../utils/nonce");
 class NewsViewProvider {
     constructor(state) {
         this.state = state;
         this.items = [];
         this.initialized = false;
-        this.bossEnabled = false;
+        this.bossEnabled = true;
         this.bossSaturation = 10;
         this.items = state.getNewsCache();
     }
@@ -57,9 +58,6 @@ class NewsViewProvider {
                 await this.refresh();
             }
         });
-        if (this.bossEnabled) {
-            this._view.webview.postMessage({ type: 'bossMode', enabled: true, saturation: this.bossSaturation });
-        }
     }
     async refresh() {
         try {
@@ -112,7 +110,10 @@ class NewsViewProvider {
         }
     }
     getHtml() {
+        const nonce = (0, nonce_1.getNonce)();
         const fontSize = vscode.workspace.getConfiguration('cyberMonopoly').get('chartFontSize', 14);
+        const bossInitEnabled = this.bossEnabled;
+        const bossInitSaturation = this.bossSaturation;
         const newsHtml = this.items.map(n => {
             const time = this.escapeHtml(n.createTime || '');
             const content = this.escapeHtml(n.content || '');
@@ -124,8 +125,8 @@ class NewsViewProvider {
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${(0, nonce_1.buildCspContent)(nonce)}">
+  <style nonce="${nonce}">
     body { margin: 0; padding: 8px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); font-size: ${fontSize}px; }
     .news-item { padding: 6px 0; border-bottom: 1px solid var(--vscode-panel-border); }
     .news-item:last-child { border-bottom: none; }
@@ -137,8 +138,13 @@ class NewsViewProvider {
 </head>
 <body>
   <div id="news-list">${newsHtml || '<div class="empty">暂无快讯</div>'}</div>
-  <script>
+  <script nonce="${nonce}">
     const list = document.getElementById('news-list');
+    let currentBossEnabled = ${bossInitEnabled};
+    let currentBossSaturation = ${bossInitSaturation};
+    if (currentBossEnabled) {
+      document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
+    }
     window.addEventListener('message', event => {
       const msg = event.data;
       if (msg.type === 'prepend') {
@@ -153,6 +159,8 @@ class NewsViewProvider {
           list.removeChild(list.lastChild);
         }
       } else if (msg.type === 'bossMode') {
+        currentBossEnabled = msg.enabled;
+        currentBossSaturation = msg.saturation;
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });

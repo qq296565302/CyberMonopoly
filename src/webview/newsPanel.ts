@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { NewsItem } from '../models/news';
+import { getNonce, buildCspContent } from '../utils/nonce';
 
 export class NewsPanel {
   private panel: vscode.WebviewPanel | undefined;
@@ -26,15 +27,17 @@ export class NewsPanel {
   }
 
   private getWebviewContent(news: NewsItem): string {
+    const nonce = getNonce();
     const time = news.createTime || '';
     const tag = news.tag ? `<span class="tag">${news.tag}</span>` : '';
-    
+
     return /*html*/ `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${buildCspContent(nonce)}">
+  <style nonce="${nonce}">
     body { margin: 0; padding: 16px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
     .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; color: var(--vscode-descriptionForeground); }
     .tag { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); padding: 2px 6px; border-radius: 3px; font-size: 11px; }
@@ -47,7 +50,7 @@ export class NewsPanel {
     ${tag}
   </div>
   <div class="content" id="news-content">${news.content}</div>
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     window.addEventListener('message', event => {
       if (event.data.type === 'news') {

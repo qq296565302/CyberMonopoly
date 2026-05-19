@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { NewsItem } from '../models/news';
 import { get7x24News } from '../api/sina';
 import { StateManager } from '../storage/stateManager';
+import { getNonce, buildCspContent } from '../utils/nonce';
 
 export class NewsViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'cyberMonopolyNews';
@@ -9,7 +10,7 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private items: NewsItem[] = [];
   private initialized = false;
-  private bossEnabled = false;
+  private bossEnabled = true;
   private bossSaturation = 10;
 
   constructor(private state: StateManager) {
@@ -35,10 +36,6 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
         await this.refresh();
       }
     });
-
-    if (this.bossEnabled) {
-      this._view.webview.postMessage({ type: 'bossMode', enabled: true, saturation: this.bossSaturation });
-    }
   }
 
   async refresh(): Promise<void> {
@@ -97,7 +94,10 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private getHtml(): string {
+    const nonce = getNonce();
     const fontSize = vscode.workspace.getConfiguration('cyberMonopoly').get<number>('chartFontSize', 14);
+    const bossInitEnabled = this.bossEnabled;
+    const bossInitSaturation = this.bossSaturation;
     const newsHtml = this.items.map(n => {
       const time = this.escapeHtml(n.createTime || '');
       const content = this.escapeHtml(n.content || '');
@@ -110,8 +110,8 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${buildCspContent(nonce)}">
+  <style nonce="${nonce}">
     body { margin: 0; padding: 8px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); font-size: ${fontSize}px; }
     .news-item { padding: 6px 0; border-bottom: 1px solid var(--vscode-panel-border); }
     .news-item:last-child { border-bottom: none; }
@@ -123,8 +123,13 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="news-list">${newsHtml || '<div class="empty">暂无快讯</div>'}</div>
-  <script>
+  <script nonce="${nonce}">
     const list = document.getElementById('news-list');
+    let currentBossEnabled = ${bossInitEnabled};
+    let currentBossSaturation = ${bossInitSaturation};
+    if (currentBossEnabled) {
+      document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
+    }
     window.addEventListener('message', event => {
       const msg = event.data;
       if (msg.type === 'prepend') {
@@ -139,6 +144,8 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
           list.removeChild(list.lastChild);
         }
       } else if (msg.type === 'bossMode') {
+        currentBossEnabled = msg.enabled;
+        currentBossSaturation = msg.saturation;
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });

@@ -2,7 +2,7 @@
   "name": "cyber-monopoly",
   "displayName": "赛博大富翁",
   "description": "A-share market tool hidden in your editor. Perfect for... coding.",
-  "version": "1.0.7",
+  "version": "1.2.4",
   "publisher": "cyber-monopoly-dev",
   "engines": {
     "vscode": "^1.85.0"
@@ -116,13 +116,20 @@
       {
         "command": "cyberMonopoly.openStockFinance",
         "title": "查看财务数据",
-        "category": "赛博大富翁"
+        "category": "赛博大富翁",
+        "icon": "$(dashboard)"
       },
       {
         "command": "cyberMonopoly.addHotToWatchlist",
         "title": "加入自选股",
         "category": "赛博大富翁",
         "icon": "$(add)"
+      },
+      {
+        "command": "cyberMonopoly.refreshMarket",
+        "title": "刷新行情板块",
+        "category": "赛博大富翁",
+        "icon": "$(refresh)"
       }
     ],
     "keybindings": [
@@ -168,11 +175,21 @@
           "command": "cyberMonopoly.refreshNews",
           "when": "view == cyberMonopolyNews",
           "group": "navigation"
+        },
+        {
+          "command": "cyberMonopoly.refreshMarket",
+          "when": "view == cyberMonopolyMarket",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "cyberMonopoly.openChart",
+          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
+          "group": "inline"
+        },
+        {
+          "command": "cyberMonopoly.openStockFinance",
           "when": "view == cyberMonopolyWatchlist && viewItem == stock",
           "group": "inline"
         },
@@ -192,34 +209,24 @@
           "group": "detail"
         },
         {
-          "command": "cyberMonopoly.openStockFinance",
-          "when": "view == cyberMonopolyWatchlist && viewItem == stock",
-          "group": "detail"
+          "command": "cyberMonopoly.openChart",
+          "when": "view == cyberMonopolyMarket && viewItem == indexItem",
+          "group": "inline"
         },
         {
           "command": "cyberMonopoly.openChart",
-          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "when": "view == cyberMonopolyMarket && viewItem == sectorItem",
+          "group": "inline"
+        },
+        {
+          "command": "cyberMonopoly.openChart",
+          "when": "view == cyberMonopolyMarket && viewItem == rankStock",
           "group": "inline"
         },
         {
           "command": "cyberMonopoly.addHotToWatchlist",
-          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
+          "when": "view == cyberMonopolyMarket && viewItem == rankStock",
           "group": "inline"
-        },
-        {
-          "command": "cyberMonopoly.openStockNews",
-          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
-          "group": "detail"
-        },
-        {
-          "command": "cyberMonopoly.openStockReport",
-          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
-          "group": "detail"
-        },
-        {
-          "command": "cyberMonopoly.openStockFinance",
-          "when": "view == cyberMonopolyWatchlist && viewItem == hotstock",
-          "group": "detail"
         }
       ]
     },
@@ -237,6 +244,10 @@
         {
           "id": "cyberMonopolyWatchlist",
           "name": "自选股"
+        },
+        {
+          "id": "cyberMonopolyMarket",
+          "name": "行情"
         },
         {
           "id": "cyberMonopolyNews",
@@ -285,7 +296,7 @@
         "cyberMonopoly.llmApiKey": {
           "type": "string",
           "default": "",
-          "description": "LLM API Key"
+          "description": "（已废弃）LLM API Key，请通过设置面板保存，将自动加密存储到 SecretStorage"
         },
         "cyberMonopoly.llmModel": {
           "type": "string",
@@ -342,6 +353,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "lightweight-charts": "^4.1.0"
+    "lightweight-charts": "^4.1.0",
+    "marked": "^18.0.3"
   }
 }

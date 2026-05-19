@@ -28,6 +28,12 @@ export interface RealtimeQuote {
   ask: number;
   date: string;
   time: string;
+  turnover: number;        // 成交额（元）
+  turnoverRate: number;    // 换手率（%）
+  pe: number;              // 市盈率(动)
+  pb: number;              // 市净率
+  totalMarketCap: number;  // 总市值（元）
+  floatMarketCap: number;  // 流通市值（元）
 }
 
 const requestCache = new Map<string, { data: Buffer; time: number }>();
@@ -73,15 +79,36 @@ export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
   const url = `https://hq.sinajs.cn/list=${toSinaCode(code)}`;
   const buffer = await fetchWithReferer(url);
   const text = new TextDecoder('gbk').decode(buffer);
-  
+
   const match = text.match(/"([^"]+)"/);
   if (!match) throw new Error(`解析失败: ${text}`);
-  
+
   const f = match[1].split(',');
   const price = parseFloat(f[3]) || 0;
   const prevClose = parseFloat(f[2]) || 0;
   const open = parseFloat(f[1]) || 0;
-  
+
+  // 获取额外数据（换手率、市盈率、市净率、总市值、流通市值）
+  let turnoverRate = 0, pe = 0, pb = 0, totalMarketCap = 0, floatMarketCap = 0;
+  try {
+    const tencentCode = toSinaCode(code);
+    const extraUrl = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${tencentCode}`;
+    const extraBuffer = await fetchWithReferer(extraUrl);
+    const extraData = JSON.parse(extraBuffer.toString('utf-8'));
+    const qtData = extraData?.data?.[tencentCode]?.qt?.[tencentCode];
+    if (qtData && Array.isArray(qtData)) {
+      // 腾讯接口返回的数组格式：
+      // [39] = 换手率, [44] = 流通市值(亿), [45] = 总市值(亿), [46] = 市净率, [52] = 市盈率(动)
+      turnoverRate = parseFloat(qtData[39]) || 0;
+      pe = parseFloat(qtData[52]) || 0;
+      pb = parseFloat(qtData[46]) || 0;
+      totalMarketCap = (parseFloat(qtData[45]) || 0) * 1e8;  // 转换为元
+      floatMarketCap = (parseFloat(qtData[44]) || 0) * 1e8;  // 转换为元
+    }
+  } catch {
+    // 获取额外数据失败时使用默认值
+  }
+
   return {
     name: f[0].trim(),
     code,
@@ -97,32 +124,38 @@ export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
     ask: parseFloat(f[7]) || 0,
     date: f[30] || '',
     time: f[31] || '',
+    turnover: parseFloat(f[9]) || 0,
+    turnoverRate,
+    pe,
+    pb,
+    totalMarketCap,
+    floatMarketCap,
   };
 }
 
 export async function getBatchQuotes(codes: string[]): Promise<RealtimeQuote[]> {
   if (codes.length === 0) return [];
-  
+
   const sinaCodes = codes.map(toSinaCode).join(',');
   const url = `https://hq.sinajs.cn/list=${sinaCodes}`;
   const buffer = await fetchWithReferer(url);
   const text = new TextDecoder('gbk').decode(buffer);
-  
+
   const lines = text.split('\n').filter(l => l.trim().length > 0);
   const results: RealtimeQuote[] = [];
-  
+
   for (const line of lines) {
     const match = line.match(/hq_str_(\w+)="([^"]+)"/);
     if (!match) continue;
-    
+
     const sinaCode = match[1];
     const code = sinaCode.replace(/^(sh|sz|bj|rt_hk|gb_)/, '');
     const f = match[2].split(',');
-    
+
     const price = parseFloat(f[3]) || 0;
     const prevClose = parseFloat(f[2]) || 0;
     const open = parseFloat(f[1]) || 0;
-    
+
     results.push({
       name: f[0].trim(),
       code,
@@ -138,6 +171,12 @@ export async function getBatchQuotes(codes: string[]): Promise<RealtimeQuote[]> 
       ask: parseFloat(f[7]) || 0,
       date: f[30] || '',
       time: f[31] || '',
+      turnover: parseFloat(f[9]) || 0,
+      turnoverRate: 0,
+      pe: 0,
+      pb: 0,
+      totalMarketCap: 0,
+      floatMarketCap: 0,
     });
   }
   

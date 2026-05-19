@@ -2860,3 +2860,63 @@ export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
 | AI 回复报错 | API Key 无效 | 检查 Settings 配置 |
 | 状态栏不显示 | showStatusBar=false | 检查配置 |
 | 数据重启丢失 | globalState 未写入 | 检查 dispose 前是否保存 |
+
+---
+
+## 附录 L: 版本历史
+
+### v1.2.4 (2026-05-12)
+
+- 修复老板键切换 tab 后状态丢失的问题（WebView 重建时 postMessage 竞态）
+- 修复老板键默认应为开启但需点击两次才生效的问题
+- 老板键初始状态改为内嵌到 HTML 模板中，不再依赖 postMessage 时序
+- 所有 Panel 的 applyBossMode 统一为始终发送当前状态（含 enabled=false）
+
+### v1.2.3 (2026-05-12)
+
+- 修复老板键切换 tab 后状态丢失的问题（WebView 重建时 postMessage 竞态）
+- 修复老板键默认应为开启但需点击两次才生效的问题
+- 老板键初始状态改为内嵌到 HTML 模板中，不再依赖 postMessage 时序
+- 所有 Panel 的 applyBossMode 统一为始终发送当前状态（含 enabled=false）
+
+### v1.2.2 (2026-05-12)
+
+- 版本升级
+
+### v1.2.0 (2026-05-12)
+
+- 新增 LLM 功能分析与多智能体协作开发文档 (`LLM-FEATURE-ANALYSIS.md`)
+- 新增智能体协作任务表 (`TEAM-TASK-TABLE.md`)
+- Function Calling 工具设计方案完成（6 个工具：行情/K线/财务/图表/涨跌分布/搜索）
+- System Prompt 优化方案完成
+- 三阶段 LLM 功能开发路线图确定
+
+### v1.1.5 (2026-05-09)
+
+- 修复 `ulist.np` API socket hang up 导致无数据的问题
+- `getIndexQuotes` 改用 `qt/stock/get` 逐个请求替代批量 API
+- `getMarketDistribution` 改用 `qt/stock/get` 逐个请求替代批量 API
+- `marketFetch` 新增重试机制（3 次重试，500ms 间隔）
+
+### v1.1.4 (2026-05-08)
+
+- 修复非交易时间行情数据清空的问题
+- 行情缓存增加「非空保护」，API 返回空数据时保留历史缓存
+- 自选股刷新逻辑优化，空结果不覆盖已有数据
+
+### v1.1.3 (2026-05-07)
+
+- 成交额差额计算优化
+- 涨跌分布显示改进
+- UI 细节打磨
+
+### v1.0.0 (2026-04-29)
+
+- 首次发布
+- 自选股实时行情（新浪 API）
+- K 线图 / 分时图（lightweight-charts）
+- 7×24 快讯滚动
+- AI 助手聊天（OpenAI 兼容）
+- 价格异动 Toast 通知
+- 状态栏行情条
+- 老板键

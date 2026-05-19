@@ -35,9 +35,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OverviewPanel = void 0;
 const vscode = __importStar(require("vscode"));
+const nonce_1 = require("../utils/nonce");
 class OverviewPanel {
     constructor(provider) {
         this.provider = provider;
+        this.bossEnabled = true;
+        this.bossSaturation = 10;
         this.refreshListener = provider.onDidChangeTreeData(() => {
             this.refreshContent();
         });
@@ -49,6 +52,8 @@ class OverviewPanel {
         if (this.panel) {
             this.panel.reveal(vscode.ViewColumn.Beside);
             this.refreshContent();
+            // 重新应用老板模式状态
+            this.applyBossMode();
             return;
         }
         this.panel = vscode.window.createWebviewPanel('cyberMonopolyOverview', '行情概览', vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
@@ -58,15 +63,25 @@ class OverviewPanel {
         this.panel.webview.html = this.getWebviewContent();
         this.setupMessageHandler();
         this.refreshContent();
+        // 应用老板模式状态
+        this.applyBossMode();
+    }
+    applyBossMode() {
+        if (this.panel) {
+            this.panel.webview.postMessage({ type: 'bossMode', enabled: this.bossEnabled, saturation: this.bossSaturation });
+        }
     }
     getWebviewContent() {
+        const nonce = (0, nonce_1.getNonce)();
+        const bossInitEnabled = this.bossEnabled;
+        const bossInitSaturation = this.bossSaturation;
         return /*html*/ `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <style>
+  <meta http-equiv="Content-Security-Policy" content="${(0, nonce_1.buildCspContent)(nonce)}">
+  <style nonce="${nonce}">
     body { margin: 0; padding: 16px; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); }
     h2 { margin: 0 0 12px 0; font-size: 16px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -81,8 +96,13 @@ class OverviewPanel {
 <body>
   <h2>行情概览</h2>
   <div id="content"><div class="loading">加载中...</div></div>
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    let currentBossEnabled = ${bossInitEnabled};
+    let currentBossSaturation = ${bossInitSaturation};
+    if (currentBossEnabled) {
+      document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
+    }
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     window.addEventListener('message', event => {
       const msg = event.data;
@@ -102,6 +122,8 @@ class OverviewPanel {
         html += '</table>';
         document.getElementById('content').innerHTML = html;
       } else if (msg.type === 'bossMode') {
+        currentBossEnabled = msg.enabled;
+        currentBossSaturation = msg.saturation;
         document.body.style.filter = msg.enabled ? 'saturate(' + (msg.saturation / 100) + ')' : '';
       }
     });
@@ -124,6 +146,8 @@ class OverviewPanel {
         this.panel.webview.postMessage({ type: 'quotes', data: quoteList });
     }
     setBossMode(enabled, saturation) {
+        this.bossEnabled = enabled;
+        this.bossSaturation = saturation;
         if (this.panel) {
             this.panel.webview.postMessage({ type: 'bossMode', enabled, saturation });
         }

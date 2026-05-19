@@ -96,6 +96,27 @@ async function getRealtimeQuote(code) {
     const price = parseFloat(f[3]) || 0;
     const prevClose = parseFloat(f[2]) || 0;
     const open = parseFloat(f[1]) || 0;
+    // 获取额外数据（换手率、市盈率、市净率、总市值、流通市值）
+    let turnoverRate = 0, pe = 0, pb = 0, totalMarketCap = 0, floatMarketCap = 0;
+    try {
+        const tencentCode = toSinaCode(code);
+        const extraUrl = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${tencentCode}`;
+        const extraBuffer = await fetchWithReferer(extraUrl);
+        const extraData = JSON.parse(extraBuffer.toString('utf-8'));
+        const qtData = extraData?.data?.[tencentCode]?.qt?.[tencentCode];
+        if (qtData && Array.isArray(qtData)) {
+            // 腾讯接口返回的数组格式：
+            // [39] = 换手率, [44] = 流通市值(亿), [45] = 总市值(亿), [46] = 市净率, [52] = 市盈率(动)
+            turnoverRate = parseFloat(qtData[39]) || 0;
+            pe = parseFloat(qtData[52]) || 0;
+            pb = parseFloat(qtData[46]) || 0;
+            totalMarketCap = (parseFloat(qtData[45]) || 0) * 1e8; // 转换为元
+            floatMarketCap = (parseFloat(qtData[44]) || 0) * 1e8; // 转换为元
+        }
+    }
+    catch {
+        // 获取额外数据失败时使用默认值
+    }
     return {
         name: f[0].trim(),
         code,
@@ -111,6 +132,12 @@ async function getRealtimeQuote(code) {
         ask: parseFloat(f[7]) || 0,
         date: f[30] || '',
         time: f[31] || '',
+        turnover: parseFloat(f[9]) || 0,
+        turnoverRate,
+        pe,
+        pb,
+        totalMarketCap,
+        floatMarketCap,
     };
 }
 async function getBatchQuotes(codes) {
@@ -147,6 +174,12 @@ async function getBatchQuotes(codes) {
             ask: parseFloat(f[7]) || 0,
             date: f[30] || '',
             time: f[31] || '',
+            turnover: parseFloat(f[9]) || 0,
+            turnoverRate: 0,
+            pe: 0,
+            pb: 0,
+            totalMarketCap: 0,
+            floatMarketCap: 0,
         });
     }
     return results;
