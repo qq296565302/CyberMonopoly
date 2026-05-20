@@ -96,7 +96,9 @@ async function getRealtimeQuote(code) {
     const price = parseFloat(f[3]) || 0;
     const prevClose = parseFloat(f[2]) || 0;
     const open = parseFloat(f[1]) || 0;
-    // 获取额外数据（换手率、市盈率、市净率、总市值、流通市值）
+    const bid = parseFloat(f[6]) || 0;
+    const ask = parseFloat(f[7]) || 0;
+    const effectivePrice = price > 0 ? price : (bid > 0 ? bid : (ask > 0 ? ask : 0));
     let turnoverRate = 0, pe = 0, pb = 0, totalMarketCap = 0, floatMarketCap = 0;
     try {
         const tencentCode = toSinaCode(code);
@@ -105,31 +107,28 @@ async function getRealtimeQuote(code) {
         const extraData = JSON.parse(extraBuffer.toString('utf-8'));
         const qtData = extraData?.data?.[tencentCode]?.qt?.[tencentCode];
         if (qtData && Array.isArray(qtData)) {
-            // 腾讯接口返回的数组格式：
-            // [39] = 换手率, [44] = 流通市值(亿), [45] = 总市值(亿), [46] = 市净率, [52] = 市盈率(动)
             turnoverRate = parseFloat(qtData[39]) || 0;
             pe = parseFloat(qtData[52]) || 0;
             pb = parseFloat(qtData[46]) || 0;
-            totalMarketCap = (parseFloat(qtData[45]) || 0) * 1e8; // 转换为元
-            floatMarketCap = (parseFloat(qtData[44]) || 0) * 1e8; // 转换为元
+            totalMarketCap = (parseFloat(qtData[45]) || 0) * 1e8;
+            floatMarketCap = (parseFloat(qtData[44]) || 0) * 1e8;
         }
     }
     catch {
-        // 获取额外数据失败时使用默认值
     }
     return {
         name: f[0].trim(),
         code,
-        price: price > 0 ? price : prevClose,
+        price: effectivePrice > 0 ? effectivePrice : prevClose,
         open,
         prevClose,
         high: parseFloat(f[4]) || 0,
         low: parseFloat(f[5]) || 0,
         volume: parseFloat(f[8]) || 0,
-        changePercent: (prevClose > 0 && price > 0) ? ((price - prevClose) / prevClose * 100) : 0,
-        changeAmount: price > 0 ? (price - prevClose) : 0,
-        bid: parseFloat(f[6]) || 0,
-        ask: parseFloat(f[7]) || 0,
+        changePercent: (prevClose > 0 && effectivePrice > 0) ? ((effectivePrice - prevClose) / prevClose * 100) : 0,
+        changeAmount: effectivePrice > 0 ? (effectivePrice - prevClose) : 0,
+        bid,
+        ask,
         date: f[30] || '',
         time: f[31] || '',
         turnover: parseFloat(f[9]) || 0,
@@ -159,19 +158,22 @@ async function getBatchQuotes(codes) {
         const price = parseFloat(f[3]) || 0;
         const prevClose = parseFloat(f[2]) || 0;
         const open = parseFloat(f[1]) || 0;
+        const bid = parseFloat(f[6]) || 0;
+        const ask = parseFloat(f[7]) || 0;
+        const effectivePrice = price > 0 ? price : (bid > 0 ? bid : (ask > 0 ? ask : 0));
         results.push({
             name: f[0].trim(),
             code,
-            price: price > 0 ? price : prevClose,
+            price: effectivePrice > 0 ? effectivePrice : prevClose,
             open,
             prevClose,
             high: parseFloat(f[4]) || 0,
             low: parseFloat(f[5]) || 0,
             volume: parseFloat(f[8]) || 0,
-            changePercent: (prevClose > 0 && price > 0) ? ((price - prevClose) / prevClose * 100) : 0,
-            changeAmount: price > 0 ? (price - prevClose) : 0,
-            bid: parseFloat(f[6]) || 0,
-            ask: parseFloat(f[7]) || 0,
+            changePercent: (prevClose > 0 && effectivePrice > 0) ? ((effectivePrice - prevClose) / prevClose * 100) : 0,
+            changeAmount: effectivePrice > 0 ? (effectivePrice - prevClose) : 0,
+            bid,
+            ask,
             date: f[30] || '',
             time: f[31] || '',
             turnover: parseFloat(f[9]) || 0,
@@ -192,14 +194,15 @@ async function getIntradayData(code) {
     const data = JSON.parse(text);
     const stockData = data.data?.[tencentCode] || data.data;
     let prevClose = stockData?.info?.prevclose || data.data?.info?.prevclose || 0;
-    const name = stockData?.info?.name || data.data?.info?.name || code;
+    let name = stockData?.info?.name || data.data?.info?.name || code;
+    let realtimeQuote = null;
     try {
-        const quote = await getRealtimeQuote(code);
-        if (quote.prevClose > 0) {
-            prevClose = quote.prevClose;
+        realtimeQuote = await getRealtimeQuote(code);
+        if (realtimeQuote.prevClose > 0) {
+            prevClose = realtimeQuote.prevClose;
         }
-        if (!name || name === code) {
-            stockData._name = quote.name;
+        if (realtimeQuote.name && (!name || name === code)) {
+            name = realtimeQuote.name;
         }
     }
     catch { }
@@ -231,6 +234,23 @@ async function getIntradayData(code) {
             label: `${code} ${timeStr}`,
         };
     }) : [];
+    if (points.length === 0 && prevClose > 0 && realtimeQuote) {
+        const livePrice = realtimeQuote.price > 0 ? realtimeQuote.price : (realtimeQuote.bid > 0 ? realtimeQuote.bid : (realtimeQuote.ask > 0 ? realtimeQuote.ask : 0));
+        if (livePrice > 0) {
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
+            points.push({
+                date: new Date(dateStr),
+                value: livePrice,
+                open: realtimeQuote.open > 0 ? realtimeQuote.open : livePrice,
+                high: realtimeQuote.high > 0 ? realtimeQuote.high : livePrice,
+                low: realtimeQuote.low > 0 ? realtimeQuote.low : livePrice,
+                close: livePrice,
+                volume: realtimeQuote.volume || 0,
+                label: `${code} ${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`,
+            });
+        }
+    }
     return {
         name: `${name} (${code})`,
         data: points,
