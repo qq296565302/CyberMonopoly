@@ -277,7 +277,7 @@ export class StockDetailPanel {
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); display: flex; flex-direction: column; box-sizing: border-box; }
     #header { padding: 12px 16px 0; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
     #stock-name { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
-    #quote-panel { display: none; margin-bottom: 12px; padding: 12px; background: var(--vscode-editor-inactiveSelectionBackground, rgba(0,0,0,0.05)); border-radius: 6px; }
+    #quote-panel { display: none; margin-bottom: 12px; padding: 12px; border-radius: 6px; }
     #quote-panel.visible { display: block; }
     .quote-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
     .quote-price { font-size: 24px; font-weight: 700; }
@@ -369,8 +369,6 @@ export class StockDetailPanel {
         <div class="quote-item"><span class="quote-label">最低</span><span class="quote-value" id="q-low">--</span></div>
         <div class="quote-item"><span class="quote-label">成交量</span><span class="quote-value" id="q-vol">--</span></div>
         <div class="quote-item"><span class="quote-label">涨跌额</span><span class="quote-value" id="q-amount">--</span></div>
-        <div class="quote-item"><span class="quote-label">买一</span><span class="quote-value" id="q-bid">--</span></div>
-        <div class="quote-item"><span class="quote-label">卖一</span><span class="quote-value" id="q-ask">--</span></div>
         <div class="quote-item"><span class="quote-label">换手率</span><span class="quote-value" id="q-turnover-rate">--</span></div>
         <div class="quote-item"><span class="quote-label">成交额</span><span class="quote-value" id="q-turnover">--</span></div>
         <div class="quote-item"><span class="quote-label">市盈(动)</span><span class="quote-value" id="q-pe">--</span></div>
@@ -503,8 +501,6 @@ export class StockDetailPanel {
       document.getElementById('q-low').className = 'quote-value ' + (quote.low > prevClose ? 'price-up' : (quote.low < prevClose ? 'price-down' : 'price-flat'));
       document.getElementById('q-vol').textContent = formatVolume(quote.volume);
       document.getElementById('q-amount').innerHTML = '<span class="' + priceClass + '">' + sign + changeAmount.toFixed(2) + '</span>';
-      document.getElementById('q-bid').textContent = quote.bid.toFixed(2);
-      document.getElementById('q-ask').textContent = quote.ask.toFixed(2);
       document.getElementById('q-turnover-rate').textContent = quote.turnoverRate ? quote.turnoverRate.toFixed(2) + '%' : '--';
       document.getElementById('q-turnover').textContent = quote.turnover ? formatMoney(quote.turnover) : '--';
       document.getElementById('q-pe').textContent = quote.pe ? quote.pe.toFixed(2) : '--';

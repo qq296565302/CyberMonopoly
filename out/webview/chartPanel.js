@@ -398,7 +398,7 @@ class ChartViewProvider {
       currentRawData = data;
 
       priceChart.applyOptions({
-        leftPriceScale: { visible: false, borderColor: 'rgba(128,128,128,0.3)' },
+        leftPriceScale: { visible: false, borderColor: 'rgba(128,128,128,0.3)', mode: LightweightCharts.PriceScaleMode.Normal },
         timeScale: {
           timeVisible: false,
           secondsVisible: false,
@@ -468,7 +468,7 @@ class ChartViewProvider {
       prevClose = prevCloseVal || 0;
 
       priceChart.applyOptions({
-        leftPriceScale: { visible: true, borderColor: 'rgba(128,128,128,0.3)' },
+        leftPriceScale: { visible: true, borderColor: 'rgba(128,128,128,0.3)', mode: LightweightCharts.PriceScaleMode.Percentage },
         localization: {
           timeFormatter: function(time) {
             if (typeof time === 'number') {
@@ -479,6 +479,10 @@ class ChartViewProvider {
                 String(d.getMinutes()).padStart(2, '0');
             }
             return String(time);
+          },
+          percentageFormatter: function(price) {
+            var sign = price >= 0 ? '+' : '';
+            return sign + price.toFixed(2) + '%';
           },
         },
         timeScale: {
@@ -527,19 +531,22 @@ class ChartViewProvider {
 
       // 左侧百分比Y轴
       var percentData = [];
-      for (var pi = 0; pi < data.length; pi++) {
-        var pd = data[pi];
-        if (pd.value != null && pd.value > 0 && basePrice > 0) {
-          var dtP = new Date(pd.date);
-          percentData.push({
-            time: Math.floor(dtP.getTime() / 1000),
-            value: (pd.value - basePrice) / basePrice * 100,
-          });
-        }
+      if (basePrice > 0 && formatted.length > 0) {
+        percentData.push({
+          time: formatted[0].time - 60,
+          value: basePrice,
+        });
+      }
+      for (var pi = 0; pi < formatted.length; pi++) {
+        percentData.push({
+          time: formatted[pi].time,
+          value: formatted[pi].value,
+        });
       }
       if (percentData.length > 0) {
         var sm = { top: 0.1, bottom: 0.1 };
         priceChart.priceScale('left').applyOptions({
+          mode: LightweightCharts.PriceScaleMode.Percentage,
           scaleMargins: sm,
           borderVisible: false,
           ticksVisible: true,
@@ -554,11 +561,9 @@ class ChartViewProvider {
           priceLineVisible: false,
           crosshairMarkerVisible: false,
           priceFormat: {
-            type: 'custom',
-            formatter: function(price) {
-              var sign = price >= 0 ? '+' : '';
-              return sign + price.toFixed(2) + '%';
-            },
+            type: 'price',
+            precision: 2,
+            minMove: 0.01,
           },
         });
         percentSeries.setData(percentData);

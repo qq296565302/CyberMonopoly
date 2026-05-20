@@ -2,7 +2,7 @@
   "name": "cyber-monopoly",
   "displayName": "赛博大富翁",
   "description": "A-share market tool hidden in your editor. Perfect for... coding.",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "publisher": "cyber-monopoly-dev",
   "engines": {
     "vscode": "^1.85.0"
