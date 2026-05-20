@@ -281,25 +281,29 @@ class StockDetailPanel {
   <meta http-equiv="Content-Security-Policy" content="${(0, nonce_1.buildCspContent)(nonce)}">
   <style nonce="${nonce}">
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-foreground); display: flex; flex-direction: column; box-sizing: border-box; }
-    #header { padding: 12px 16px 0; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
-    #stock-name { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
-    #quote-panel { display: none; margin-bottom: 12px; padding: 12px; border-radius: 6px; }
+    #header { padding: 8px 12px 0; border-bottom: 1px solid var(--vscode-panel-border); flex-shrink: 0; }
+    #stock-name { font-size: 15px; font-weight: bold; margin-bottom: 4px; }
+    #quote-panel { display: none; margin-bottom: 8px; padding: 8px; border-radius: 6px; }
     #quote-panel.visible { display: block; }
-    .quote-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
-    .quote-price { font-size: 24px; font-weight: 700; }
-    .quote-change { font-size: 14px; font-weight: 500; }
-    .quote-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; font-size: 12px; }
+    .quote-header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+    .quote-price { font-size: 20px; font-weight: 700; }
+    .quote-change { font-size: 13px; font-weight: 500; }
+    .quote-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 12px; font-size: 12px; }
     .quote-item { display: flex; justify-content: space-between; }
     .quote-label { color: var(--vscode-descriptionForeground); }
     .quote-value { font-weight: 500; }
     .price-up { color: #ef4444; }
     .price-down { color: #22c55e; }
     .price-flat { color: var(--vscode-foreground); }
-    .limit-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--vscode-panel-border); }
-    .limit-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--vscode-descriptionForeground); }
-    .limit-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 16px; font-size: 12px; }
+    .limit-section { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--vscode-panel-border); }
+    .limit-title { font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--vscode-descriptionForeground); }
+    .limit-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 12px; font-size: 12px; }
+    .calc-section { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .calc-input { width: 60px; padding: 3px 6px; border: 1px solid var(--vscode-input-border); border-radius: 3px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font-size: 12px; text-align: center; }
+    .calc-input:focus { outline: none; border-color: var(--vscode-focusBorder); }
+    .calc-result { font-size: 12px; display: flex; gap: 12px; }
     #tabs { display: flex; gap: 0; }
-    .tab { padding: 8px 20px; cursor: pointer; font-size: 13px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; color: var(--vscode-descriptionForeground); background: transparent; transition: all 0.15s; }
+    .tab { padding: 6px 16px; cursor: pointer; font-size: 13px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; color: var(--vscode-descriptionForeground); background: transparent; transition: all 0.15s; }
     .tab:hover { color: var(--vscode-foreground); background: var(--vscode-editor-inactiveSelectionBackground); }
     .tab.active { color: var(--vscode-foreground); background: var(--vscode-editor-background); border-color: var(--vscode-panel-border); border-bottom-color: var(--vscode-editor-background); font-weight: 500; position: relative; z-index: 1; margin-bottom: -1px; }
     #content { flex: 1; overflow-y: auto; padding: 16px; }
@@ -390,14 +394,15 @@ class StockDetailPanel {
         </div>
       </div>
       <div class="limit-section" id="gem-star-section" style="display:none">
-        <div class="limit-title">创业板/科创板涨跌幅参考</div>
-        <div class="limit-grid">
-          <div class="quote-item"><span class="quote-label">+10%</span><span class="quote-value price-up" id="q-up10">--</span></div>
-          <div class="quote-item"><span class="quote-label">-10%</span><span class="quote-value price-down" id="q-down10">--</span></div>
-          <div class="quote-item"><span class="quote-label">+15%</span><span class="quote-value price-up" id="q-up15">--</span></div>
-          <div class="quote-item"><span class="quote-label">-15%</span><span class="quote-value price-down" id="q-down15">--</span></div>
-          <div class="quote-item"><span class="quote-label">+20%</span><span class="quote-value price-up" id="q-up20">--</span></div>
-          <div class="quote-item"><span class="quote-label">-20%</span><span class="quote-value price-down" id="q-down20">--</span></div>
+        <div class="limit-title">涨跌幅计算</div>
+        <div class="calc-section">
+          <span class="quote-label">涨跌幅</span>
+          <input type="number" class="calc-input" id="calc-percent" value="20" step="1" min="-100" max="100">
+          <span class="quote-label">%</span>
+          <div class="calc-result">
+            <span>对应价格: <span class="price-up" id="calc-price-up">--</span></span>
+            <span>对应价格: <span class="price-down" id="calc-price-down">--</span></span>
+          </div>
         </div>
       </div>
     </div>
@@ -423,11 +428,24 @@ class StockDetailPanel {
     var cachedNews = [];
     var cachedReports = [];
     var cachedPage = 1;
+    window._prevClose = 0;
 
     var \$tabs = document.querySelectorAll('.tab');
     var \$content = document.getElementById('content');
     var \$stockName = document.getElementById('stock-name');
     var \$quotePanel = document.getElementById('quote-panel');
+    var \$calcPercent = document.getElementById('calc-percent');
+
+    function updateCalcPrice() {
+      var percent = parseFloat(\$calcPercent.value);
+      if (isNaN(percent) || window._prevClose <= 0) return;
+      var upPrice = (window._prevClose * (1 + percent / 100)).toFixed(2);
+      var downPrice = (window._prevClose * (1 - percent / 100)).toFixed(2);
+      document.getElementById('calc-price-up').textContent = upPrice;
+      document.getElementById('calc-price-down').textContent = downPrice;
+    }
+
+    \$calcPercent.addEventListener('input', updateCalcPrice);
 
     \$tabs.forEach(function(t) {
       t.addEventListener('click', function() {
@@ -519,12 +537,8 @@ class StockDetailPanel {
 
       if (limitPrices.isGemOrStar) {
         document.getElementById('gem-star-section').style.display = '';
-        document.getElementById('q-up10').textContent = limitPrices.limitUp10.toFixed(2);
-        document.getElementById('q-down10').textContent = limitPrices.limitDown10.toFixed(2);
-        document.getElementById('q-up15').textContent = limitPrices.limitUp15.toFixed(2);
-        document.getElementById('q-down15').textContent = limitPrices.limitDown15.toFixed(2);
-        document.getElementById('q-up20').textContent = limitPrices.limitUp20.toFixed(2);
-        document.getElementById('q-down20').textContent = limitPrices.limitDown20.toFixed(2);
+        window._prevClose = prevClose;
+        updateCalcPrice();
       } else {
         document.getElementById('gem-star-section').style.display = 'none';
       }
