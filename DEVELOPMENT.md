@@ -2865,6 +2865,15 @@ export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
 
 ## 附录 L: 版本历史
 
+### v1.3.0 (2026-05-21)
+
+- 新增电台直播功能：支持经济之声、中国之声、环球资讯广播三套央广节目
+- 新增本地流媒体代理服务器（StreamProxy），解决 WebView CORS 跨域限制
+- 新增 hls.js 集成，支持 HLS 直播流播放
+- 新增电台快捷键 Ctrl+Shift+R（Mac: Cmd+Shift+R）
+- 修复 WebView CSP 策略导致 HLS 播放失败的问题（添加 blob: 和 connect-src）
+- 修复 m3u8 相对路径在代理模式下解析错误的问题（路径路由模式）
+
 ### v1.2.6 (2026-05-21)
 
 - 修复自选股列表在9:15集合竞价期间数据不刷新的问题

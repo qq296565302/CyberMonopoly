@@ -2,7 +2,7 @@
   "name": "cyber-monopoly",
   "displayName": "赛博大富翁",
   "description": "A-share market tool hidden in your editor. Perfect for... coding.",
-  "version": "1.2.6",
+  "version": "1.3.0",
   "publisher": "cyber-monopoly-dev",
   "engines": {
     "vscode": "^1.85.0"
@@ -130,6 +130,12 @@
         "title": "刷新行情板块",
         "category": "赛博大富翁",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "cyberMonopoly.openRadio",
+        "title": "电台直播",
+        "category": "赛博大富翁",
+        "icon": "$(radio)"
       }
     ],
     "keybindings": [
@@ -152,6 +158,11 @@
         "command": "cyberMonopoly.toggleBossKey",
         "key": "alt+shift+b",
         "mac": "alt+shift+b"
+      },
+      {
+        "command": "cyberMonopoly.openRadio",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r"
       }
     ],
     "menus": {

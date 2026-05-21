@@ -47,6 +47,8 @@ const aiChatPanel_1 = require("./webview/aiChatPanel");
 const overviewPanel_1 = require("./webview/overviewPanel");
 const settingsPanel_1 = require("./webview/settingsPanel");
 const stockDetailPanel_1 = require("./webview/stockDetailPanel");
+const radioPanel_1 = require("./webview/radioPanel");
+const streamProxy_1 = require("./utils/streamProxy");
 const llmClient_1 = require("./chat/llmClient");
 const watchlist_1 = require("./commands/watchlist");
 const news_1 = require("./commands/news");
@@ -67,6 +69,8 @@ let overviewPanelRef;
 let settingsPanelRef;
 let aiChatPanelRef;
 let stockDetailPanelRef;
+let radioPanelRef;
+let streamProxy;
 let stateManagerRef;
 let llmRef;
 function activate(context) {
@@ -94,11 +98,13 @@ function doActivateSync(context) {
     const overviewPanel = new overviewPanel_1.OverviewPanel(watchlistProvider);
     const settingsPanel = new settingsPanel_1.SettingsPanel();
     const stockDetailPanel = new stockDetailPanel_1.StockDetailPanel();
+    const radioPanel = new radioPanel_1.RadioPanel();
     chartViewProviderRef = chartViewProvider;
     newsProviderRef = newsProvider;
     overviewPanelRef = overviewPanel;
     settingsPanelRef = settingsPanel;
     stockDetailPanelRef = stockDetailPanel;
+    radioPanelRef = radioPanel;
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('cyberMonopolyChart', chartViewProvider));
     const config = vscode.workspace.getConfiguration('cyberMonopoly');
     const llmBaseUrl = config.get('llmBaseUrl', '');
@@ -130,6 +136,14 @@ function doActivateSync(context) {
         const saturation = cfg.get('bossKeySaturation', 10);
         applyBossMode(saturation);
         vscode.window.showInformationMessage(bossMode ? '老板键已激活 - 隐蔽模式' : '老板键已关闭 - 正常模式');
+    }), vscode.commands.registerCommand('cyberMonopoly.openRadio', async () => {
+        radioPanelRef.setContext(context);
+        if (!streamProxy) {
+            streamProxy = new streamProxy_1.StreamProxy();
+            const port = await streamProxy.start();
+            radioPanelRef.setProxyPort(port);
+        }
+        radioPanelRef.show();
     }));
     const enableStatusBar = config.get('enableStatusBar', true);
     if (enableStatusBar) {
@@ -198,6 +212,10 @@ function deactivate() {
     if (stockTicker) {
         stockTicker.dispose();
         stockTicker = undefined;
+    }
+    if (streamProxy) {
+        streamProxy.dispose();
+        streamProxy = undefined;
     }
     // 确保所有待保存的状态数据已写入
     const logger = (0, logger_1.getLogger)();

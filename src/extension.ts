@@ -10,6 +10,8 @@ import { AiChatPanel } from './webview/aiChatPanel';
 import { OverviewPanel } from './webview/overviewPanel';
 import { SettingsPanel } from './webview/settingsPanel';
 import { StockDetailPanel } from './webview/stockDetailPanel';
+import { RadioPanel } from './webview/radioPanel';
+import { StreamProxy } from './utils/streamProxy';
 import { LlmClient } from './chat/llmClient';
 import { registerWatchlistCommands } from './commands/watchlist';
 import { registerNewsCommands } from './commands/news';
@@ -31,6 +33,8 @@ let overviewPanelRef: OverviewPanel;
 let settingsPanelRef: SettingsPanel;
 let aiChatPanelRef: AiChatPanel;
 let stockDetailPanelRef: StockDetailPanel;
+let radioPanelRef: RadioPanel;
+let streamProxy: StreamProxy;
 let stateManagerRef: StateManager;
 let llmRef: LlmClient;
 
@@ -78,11 +82,13 @@ function doActivateSync(context: vscode.ExtensionContext) {
   const overviewPanel = new OverviewPanel(watchlistProvider);
   const settingsPanel = new SettingsPanel();
   const stockDetailPanel = new StockDetailPanel();
+  const radioPanel = new RadioPanel();
   chartViewProviderRef = chartViewProvider;
   newsProviderRef = newsProvider;
   overviewPanelRef = overviewPanel;
   settingsPanelRef = settingsPanel;
   stockDetailPanelRef = stockDetailPanel;
+  radioPanelRef = radioPanel;
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -134,6 +140,15 @@ function doActivateSync(context: vscode.ExtensionContext) {
       const saturation = cfg.get<number>('bossKeySaturation', 10);
       applyBossMode(saturation);
       vscode.window.showInformationMessage(bossMode ? '老板键已激活 - 隐蔽模式' : '老板键已关闭 - 正常模式');
+    }),
+    vscode.commands.registerCommand('cyberMonopoly.openRadio', async () => {
+      radioPanelRef.setContext(context);
+      if (!streamProxy) {
+        streamProxy = new StreamProxy();
+        const port = await streamProxy.start();
+        radioPanelRef.setProxyPort(port);
+      }
+      radioPanelRef.show();
     })
   );
 
@@ -208,6 +223,10 @@ export function deactivate(): Thenable<void> | void {
   if (stockTicker) {
     stockTicker.dispose();
     stockTicker = undefined;
+  }
+  if (streamProxy) {
+    streamProxy.dispose();
+    streamProxy = undefined as any;
   }
 
   // 确保所有待保存的状态数据已写入
