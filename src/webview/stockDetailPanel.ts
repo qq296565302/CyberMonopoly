@@ -394,8 +394,8 @@ export class StockDetailPanel {
           <input type="number" class="calc-input" id="calc-percent" value="20" step="1" min="-100" max="100">
           <span class="quote-label">%</span>
           <div class="calc-result">
-            <span>对应价格: <span class="price-up" id="calc-price-up">--</span></span>
-            <span>对应价格: <span class="price-down" id="calc-price-down">--</span></span>
+            <span>上涨价格: <span class="price-up" id="calc-price-up">--</span></span>
+            <span>下跌价格: <span class="price-down" id="calc-price-down">--</span></span>
           </div>
         </div>
       </div>
