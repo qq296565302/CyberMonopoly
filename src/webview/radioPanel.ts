@@ -24,8 +24,8 @@ const RADIO_STATIONS: RadioStation[] = [
   },
   {
     name: '环球资讯广播',
-    url: 'https://cnlive.cnr.cn/hls/huanqiuzixunguangbo.m3u8',
-    freq: 'FM107.1',
+    url: 'http://satellitepull.cnr.cn/live/wxhqzx01/playlist.m3u8',
+    freq: 'FM90.5',
     desc: '环球资讯，轻松掌握天下事',
   },
 ];

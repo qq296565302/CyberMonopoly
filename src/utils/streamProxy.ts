@@ -1,6 +1,10 @@
 import * as http from 'http';
 import * as https from 'https';
 
+const HTTP_HOSTS = [
+  'satellitepull.cnr.cn',
+];
+
 const ALLOWED_HOSTS = [
   'ngcdn001.cnr.cn',
   'ngcdn002.cnr.cn',
@@ -79,16 +83,15 @@ export class StreamProxy {
       return;
     }
 
-    this.proxyRequest(hostname, remotePath, res);
+    this.proxyRequest(hostname, remotePath, res, !HTTP_HOSTS.includes(hostname));
   }
 
-  private proxyRequest(hostname: string, remotePath: string, res: http.ServerResponse): void {
-    const isHttps = true;
-    const lib = https;
+  private proxyRequest(hostname: string, remotePath: string, res: http.ServerResponse, useHttps: boolean = true): void {
+    const lib = useHttps ? https : http;
 
     const options: https.RequestOptions = {
       hostname: hostname,
-      port: 443,
+      port: useHttps ? 443 : 80,
       path: remotePath,
       method: 'GET',
       headers: {
@@ -105,7 +108,7 @@ export class StreamProxy {
         try {
           const parsed = new URL(redirectUrl);
           if (ALLOWED_HOSTS.includes(parsed.hostname)) {
-            this.proxyRequest(parsed.hostname, parsed.pathname + parsed.search, res);
+            this.proxyRequest(parsed.hostname, parsed.pathname + parsed.search, res, parsed.protocol === 'https:');
           } else {
             res.writeHead(403, { 'Content-Type': 'text/plain' });
             res.end('Redirect to disallowed host');

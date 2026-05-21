@@ -27,10 +27,11 @@ DeepSeek-R1-0528-Qwen3-8B
 | 7x24 快讯 | 新浪财经实时快讯，侧边栏滚动 |
 | 个股深度 | 个股资讯/研报评级/财务数据 一站式查看 |
 | 老板键 | 一键隐蔽模式，降低画面饱和度，伪装输出日志 |
+| 电台直播 | 央广三套节目实时收听，边看盘边听经济之声 |
 
 ### 1.3 技术标签
 
-`VSCode Extension` · `TypeScript` · `TradingView Lightweight Charts` · `A股` · `实时行情` · `AI Chat` · `Function Calling` · `Streaming` · `Markdown` · `Quick Commands`
+`VSCode Extension` · `TypeScript` · `TradingView Lightweight Charts` · `A股` · `实时行情` · `AI Chat` · `Function Calling` · `Streaming` · `Markdown` · `Quick Commands` · `HLS` · `Radio`
 
 ---
 
@@ -169,6 +170,27 @@ DeepSeek-R1-0528-Qwen3-8B
 - 显示：涨跌图标 + 名称 + 当前价 + 涨跌幅
 - 点击打开行情概览
 
+### 2.11 电台直播
+
+**描述**: 内置央广电台直播面板，边看盘边听经济之声，不错过任何市场动态。
+
+- 快捷键 `Ctrl+Shift+R` 打开
+- 支持三套央广节目实时收听：
+
+| 电台 | 频率 | 简介 |
+|------|------|------|
+| 经济之声 | FM96.6 | 唯一覆盖全国的财经专业广播，交易日 9:15-16:00《交易实况》 |
+| 中国之声 | FM106.1 | 中央人民广播电台第一套新闻综合广播 |
+| 环球资讯广播 | FM90.5 | 环球资讯，轻松掌握天下事 |
+
+- **HLS 直播流**：基于 hls.js 实时解码播放，低延迟流畅收听
+- **本地代理**：内置 StreamProxy 代理服务器，绕过 WebView CORS 跨域限制
+- **播放控制**：播放/暂停、音量调节、电台切换
+- **视觉反馈**：播放时圆形图标脉冲动画，连接/缓冲/错误状态实时显示
+- **错误恢复**：网络错误自动重连，媒体解码错误自动恢复
+
+**网站展示建议**: 展示电台面板截图，突出"边看盘边听经济之声"的使用场景
+
 ---
 
 ## 三、视觉设计规范
@@ -306,6 +328,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | `Ctrl+Shift+Q` | 打开行情概览面板 |
 | `Ctrl+Shift+A` | 打开 AI 聊天助手 |
 | `Alt+Shift+B` | 切换老板键隐蔽模式 |
+| `Ctrl+Shift+R` | 打开电台直播面板 |
 | `F5` | 刷新当前行情（侧边栏聚焦时） |
 
 ### AI 聊天快捷指令
@@ -362,6 +385,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 研报评级 | 东方财富 | 否 |
 | 财务数据 | 东方财富 | 否 |
 | 热门股票 | 东方财富 | 否 |
+| 电台直播 | 央广 CDN（HLS 直播流） | 否 |
 | AI 对话 | 用户自配 LLM（支持 Function Calling） | 需要 |
 
 ---
@@ -411,7 +435,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 
 **辅助说明**:
 ```
-免费 · 开源 · 无需 API Key · 实时行情 · AI 助手 · Function Calling · 快捷指令
+免费 · 开源 · 无需 API Key · 实时行情 · AI 助手 · Function Calling · 快捷指令 · 电台直播
 ```
 
 ### 7.3 功能卡片文案
@@ -425,7 +449,8 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 🤖 | AI 助手 | Function Calling + 快捷指令，AI 主动查询行情/财报/研报，一句话搞定 |
 | 🔔 | 智能提醒 | 价格目标/涨跌异动自动弹窗，交易时段精准提醒 |
 | 👁 | 老板键 | 一键隐蔽模式，画面降饱和，老板从背后走过也不怕 |
-| 📋 | 个股深度 | 资讯/研报/财务数据一站式查看，快速了解个股基本面 |
+| � | 电台直播 | 央广经济之声/中国之声/环球资讯实时收听，边看盘边听广播 |
+| � | 个股深度 | 资讯/研报/财务数据一站式查看，快速了解个股基本面 |
 
 ---
 
@@ -439,6 +464,7 @@ font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
 | 操作系统 | Windows / macOS / Linux |
 | Node.js | 使用 VSCode 内置 Node.js |
 | 图表库 | TradingView Lightweight Charts 4.x |
+| 直播流 | hls.js（HLS 协议解码播放） |
 | Markdown 渲染 | marked（AI 回复富文本渲染） |
 | 编码库 | iconv-lite（处理新浪 GBK 编码） |
 | 包大小 | < 500KB（不含图表库 ~100KB） |
@@ -453,12 +479,13 @@ src/
 │   └── eastmoney.ts      # 东方财富 API（搜索/资讯/研报/财务/热门）
 ├── models/               # 数据模型定义
 ├── provider/             # TreeDataProvider（自选股/快讯侧边栏）
-├── webview/              # Webview 面板（图表/概览/AI/详情/设置）
+├── webview/              # Webview 面板（图表/概览/AI/详情/设置/电台）
 ├── commands/             # 命令处理
 ├── chat/                 # LLM 客户端
 ├── statusbar/            # 状态栏行情滚动
 ├── notification/         # 异动提醒
-└── storage/              # 状态持久化
+├── storage/              # 状态持久化
+└── utils/                # 工具函数（日志/Nonce/流媒体代理）
 ```
 
 ---
@@ -470,11 +497,11 @@ src/
 ```html
 <title>赛博大富翁 - 藏在 VSCode 里的 A 股行情工具</title>
 <meta name="description" content="免费开源的 VSCode 扩展，实时 A 股行情、K 线图、AI 助手、老板键隐蔽模式。看起来像在写代码，实际上在看盘。">
-<meta name="keywords" content="VSCode, A股, 股票, 行情, K线, AI, 老板键, 看盘, 扩展, Function Calling, 快捷指令">
+<meta name="keywords" content="VSCode, A股, 股票, 行情, K线, AI, 老板键, 看盘, 扩展, Function Calling, 快捷指令, 电台, 直播">
 
 <!-- Open Graph -->
 <meta property="og:title" content="赛博大富翁 - 藏在 VSCode 里的 A 股行情工具">
-<meta property="og:description" content="看起来像在写代码，实际上在看盘。实时行情、K线图、AI助手、老板键。">
+<meta property="og:description" content="看起来像在写代码，实际上在看盘。实时行情、K线图、AI助手、老板键、电台直播。">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://your-domain.com/og-banner.png">
 ```
@@ -511,8 +538,40 @@ src/
 
 | 项目 | 值 |
 |------|-----|
-| 当前版本 | 1.2.0 |
+| 当前版本 | 1.3.1 |
 | 许可证 | MIT |
 | VSCode 最低版本 | 1.85.0 |
 | 语言 | TypeScript |
 | 包管理 | npm |
+
+---
+
+## 十二、版本历史
+
+### v1.3.0 (2026-05-21)
+
+- 🎙️ **新增电台直播功能**：支持经济之声、中国之声、环球资讯广播三套央广节目实时收听
+- 🔧 新增本地流媒体代理服务器（StreamProxy），解决 WebView CORS 跨域限制
+- 🎵 集成 hls.js，支持 HLS 直播流播放
+- ⌨️ 新增电台快捷键 `Ctrl+Shift+R`（Mac: `Cmd+Shift+R`）
+- 🐛 修复 WebView CSP 策略导致 HLS 播放失败的问题（添加 blob: 和 connect-src）
+- 🐛 修复 m3u8 相对路径在代理模式下解析错误的问题（路径路由模式）
+
+### v1.2.6 (2026-05-21)
+
+- 🐛 修复自选股列表在 9:15 集合竞价期间数据不刷新的问题
+- ✨ 新增买一/卖一价格回退逻辑，集合竞价期间优先显示买一价或卖一价
+- 🐛 修复分时图在集合竞价期间无数据点的问题（v1.2.5 遗留）
+
+### v1.2.5 (2026-05-21)
+
+- 🐛 修复分时图在 9:15-9:25 集合竞价期间无数据的问题
+- 🐛 修复 Y 轴百分比模式显示 -100% 而非 -1% 的计算错误
+- 🐛 修复 Y 轴百分比模式下缺少 % 符号的问题
+
+### v1.2.4 (2026-05-12)
+
+- 🐛 修复老板键切换 tab 后状态丢失的问题（WebView 重建时 postMessage 竞态）
+- 🐛 修复老板键默认应为开启但需点击两次才生效的问题
+- ✨ 老板键初始状态改为内嵌到 HTML 模板中，不再依赖 postMessage 时序
+- ✨ 所有 Panel 的 applyBossMode 统一为始终发送当前状态（含 enabled=false）
