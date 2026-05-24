@@ -2,6 +2,8 @@ import * as https from 'https';
 import { detectMarket, Market } from '../models/stock';
 import { NewsItem } from '../models/news';
 import { DataPoint, DataSeries } from '../models/chart';
+import { AppError } from '../utils/errors';
+import { logger } from '../utils/logger';
 export { DataPoint, DataSeries } from '../models/chart';
 
 function toSinaCode(code: string): string {
@@ -39,38 +41,76 @@ export interface RealtimeQuote {
 const requestCache = new Map<string, { data: Buffer; time: number }>();
 const CACHE_TTL = 3000;
 
-function fetchWithReferer(url: string, timeoutMs = 10000): Promise<Buffer> {
+async function fetchWithReferer(url: string, timeoutMs = 15000, retries = 2): Promise<Buffer> {
   const cached = requestCache.get(url);
   if (cached && Date.now() - cached.time < CACHE_TTL) {
     return Promise.resolve(cached.data);
   }
 
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const data = await fetchOnce(url, timeoutMs);
+      requestCache.set(url, { data, time: Date.now() });
+      return data;
+    } catch (err: any) {
+      lastError = err;
+      const isSocketError = err.message?.includes('socket hang up') || 
+                           err.message?.includes('ECONNRESET') ||
+                           err.message?.includes('ECONNREFUSED');
+      
+      if (isSocketError && attempt < retries) {
+        logger.warn(`fetchWithReferer socket error, retrying (${attempt + 1}/${retries}): ${url}`, err.message);
+        await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+        continue;
+      }
+      
+      if (isSocketError) {
+        throw AppError.network(
+          '网络连接中断，请检查网络或稍后重试',
+          { url, attempt },
+          true
+        );
+      }
+      throw err;
+    }
+  }
+  
+  throw lastError || new Error('未知错误');
+}
+
+function fetchOnce(url: string, timeoutMs: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
         'Referer': 'https://finance.sina.com.cn',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-      }
+      },
+      timeout: timeoutMs,
     };
-
-    const timer = setTimeout(() => {
-      req.destroy();
-      reject(new Error(`请求超时 (${timeoutMs}ms): ${url}`));
-    }, timeoutMs);
 
     const req = https.get(url, options, (res) => {
       const chunks: Buffer[] = [];
+      
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
-        clearTimeout(timer);
         const data = Buffer.concat(chunks);
-        requestCache.set(url, { data, time: Date.now() });
         resolve(data);
       });
+      
+      res.on('error', (err) => {
+        reject(err);
+      });
     });
+    
     req.on('error', (err) => {
-      clearTimeout(timer);
       reject(err);
+    });
+    
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`请求超时 (${timeoutMs}ms)`));
     });
   });
 }

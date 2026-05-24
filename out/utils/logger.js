@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Logger = void 0;
+exports.logger = exports.Logger = void 0;
 exports.getLogger = getLogger;
 exports.withErrorHandling = withErrorHandling;
 exports.withSyncErrorHandling = withSyncErrorHandling;
@@ -168,4 +168,6 @@ function withSyncErrorHandling(fn, errorMessage, showToast = false) {
         return undefined;
     }
 }
+// 导出默认 logger 实例以便直接使用
+exports.logger = getLogger();
 //# sourceMappingURL=logger.js.map

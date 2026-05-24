@@ -154,3 +154,6 @@ export function withSyncErrorHandling<T>(
     return undefined;
   }
 }
+
+// 导出默认 logger 实例以便直接使用
+export const logger = getLogger();
