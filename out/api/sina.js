@@ -39,6 +39,8 @@ exports.getIntradayData = getIntradayData;
 exports.getKlineData = getKlineData;
 exports.get7x24News = get7x24News;
 const https = __importStar(require("https"));
+const errors_1 = require("../utils/errors");
+const logger_1 = require("../utils/logger");
 function toSinaCode(code) {
     if (typeof code !== 'string')
         code = String(code || '');
@@ -53,35 +55,62 @@ function toSinaCode(code) {
 }
 const requestCache = new Map();
 const CACHE_TTL = 3000;
-function fetchWithReferer(url, timeoutMs = 10000) {
+async function fetchWithReferer(url, timeoutMs = 15000, retries = 2) {
     const cached = requestCache.get(url);
     if (cached && Date.now() - cached.time < CACHE_TTL) {
         return Promise.resolve(cached.data);
     }
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const data = await fetchOnce(url, timeoutMs);
+            requestCache.set(url, { data, time: Date.now() });
+            return data;
+        }
+        catch (err) {
+            lastError = err;
+            const isSocketError = err.message?.includes('socket hang up') ||
+                err.message?.includes('ECONNRESET') ||
+                err.message?.includes('ECONNREFUSED');
+            if (isSocketError && attempt < retries) {
+                logger_1.logger.warn(`fetchWithReferer socket error, retrying (${attempt + 1}/${retries}): ${url}`, err.message);
+                await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+                continue;
+            }
+            if (isSocketError) {
+                throw errors_1.AppError.network('网络连接中断，请检查网络或稍后重试', { url, attempt }, true);
+            }
+            throw err;
+        }
+    }
+    throw lastError || new Error('未知错误');
+}
+function fetchOnce(url, timeoutMs) {
     return new Promise((resolve, reject) => {
         const options = {
             headers: {
                 'Referer': 'https://finance.sina.com.cn',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            }
+            },
+            timeout: timeoutMs,
         };
-        const timer = setTimeout(() => {
-            req.destroy();
-            reject(new Error(`请求超时 (${timeoutMs}ms): ${url}`));
-        }, timeoutMs);
         const req = https.get(url, options, (res) => {
             const chunks = [];
             res.on('data', chunk => chunks.push(chunk));
             res.on('end', () => {
-                clearTimeout(timer);
                 const data = Buffer.concat(chunks);
-                requestCache.set(url, { data, time: Date.now() });
                 resolve(data);
+            });
+            res.on('error', (err) => {
+                reject(err);
             });
         });
         req.on('error', (err) => {
-            clearTimeout(timer);
             reject(err);
+        });
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error(`请求超时 (${timeoutMs}ms)`));
         });
     });
 }
