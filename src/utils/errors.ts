@@ -30,6 +30,7 @@ export class AppError extends Error {
     public readonly statusCode?: number;
     public readonly context?: string;
     public readonly retryable: boolean;
+    public readonly originalError?: Error;
 
     constructor(
         code: ErrorCode,
@@ -47,9 +48,9 @@ export class AppError extends Error {
         this.statusCode = options?.statusCode;
         this.context = options?.context;
         this.retryable = options?.retryable ?? false;
-        
+
         if (options?.cause) {
-            this.cause = options.cause;
+            this.originalError = options.cause;
         }
 
         Error.captureStackTrace(this, AppError);

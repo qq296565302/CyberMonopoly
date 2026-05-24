@@ -2,7 +2,7 @@
  * 行情查询工具 - 获取个股实时行情
  */
 
-import { ITool, ToolContext } from './base';
+import { ITool, ToolContext, ToolError } from './base';
 import { ToolDefinition, ToolResult } from '../toolExecutor';
 import { getRealtimeQuote } from '../../api/sina';
 import { AppError } from '../../utils/errors';
@@ -35,20 +35,35 @@ export class StockQuoteTool implements ITool {
 
         // 参数校验
         if (!code) {
-            return { success: false, error: '股票代码不能为空' };
+            return {
+                success: false,
+                error: {
+                    code: 'INVALID_PARAM',
+                    message: '股票代码不能为空'
+                } as ToolError
+            };
         }
 
         if (!/^\d{6}$/.test(code)) {
-            return { success: false, error: `无效的股票代码："${code}"，应为 6 位数字` };
+            return {
+                success: false,
+                error: {
+                    code: 'INVALID_PARAM',
+                    message: `无效的股票代码："${code}"，应为 6 位数字`
+                } as ToolError
+            };
         }
 
         try {
             const quote = await getRealtimeQuote(code);
-            
+
             if (!quote) {
-                return { 
-                    success: false, 
-                    error: `未找到股票 ${code} 的行情数据，可能该股票不存在或已退市` 
+                return {
+                    success: false,
+                    error: {
+                        code: 'DATA_NOT_FOUND',
+                        message: `未找到股票 ${code} 的行情数据，可能该股票不存在或已退市`
+                    } as ToolError
                 };
             }
 
@@ -58,29 +73,39 @@ export class StockQuoteTool implements ITool {
                     code: quote.code,
                     name: quote.name,
                     price: quote.price,
-                    change: quote.change,
+                    changeAmount: quote.changeAmount,
                     changePercent: quote.changePercent,
                     open: quote.open,
                     high: quote.high,
                     low: quote.low,
                     prevClose: quote.prevClose,
                     volume: quote.volume,
-                    amount: quote.amount,
+                    turnover: quote.turnover,
                     bid: quote.bid,
                     ask: quote.ask,
-                    timestamp: quote.timestamp
+                    date: quote.date,
+                    time: quote.time
                 }
             };
         } catch (error) {
-            logger.error(`行情查询失败：${code}`, 'StockQuoteTool', error as Error);
-            
+            logger.error(`[StockQuoteTool] 行情查询失败：${code}`, error);
+
             if (error instanceof AppError) {
-                return { success: false, error: `获取行情失败：${error.message}` };
+                return {
+                    success: false,
+                    error: {
+                        code: error.code,
+                        message: `获取行情失败：${error.message}`
+                    } as ToolError
+                };
             }
-            
-            return { 
-                success: false, 
-                error: `获取行情失败：${error instanceof Error ? error.message : String(error)}` 
+
+            return {
+                success: false,
+                error: {
+                    code: 'EXECUTION_ERROR',
+                    message: `获取行情失败：${error instanceof Error ? error.message : String(error)}`
+                } as ToolError
             };
         }
     }
@@ -113,16 +138,28 @@ export class BatchQuoteTool implements ITool {
     };
 
     async execute(args: Record<string, unknown>, _context?: ToolContext): Promise<ToolResult> {
-        const codes = Array.isArray(args.codes) 
+        const codes = Array.isArray(args.codes)
             ? args.codes.map(c => String(c).trim()).filter(c => /^\d{6}$/.test(c))
             : [];
 
         if (codes.length === 0) {
-            return { success: false, error: '请提供有效的股票代码列表' };
+            return {
+                success: false,
+                error: {
+                    code: 'INVALID_PARAM',
+                    message: '请提供有效的股票代码列表'
+                } as ToolError
+            };
         }
 
         if (codes.length > 50) {
-            return { success: false, error: '单次查询最多支持 50 只股票' };
+            return {
+                success: false,
+                error: {
+                    code: 'INVALID_PARAM',
+                    message: '单次查询最多支持 50 只股票'
+                } as ToolError
+            };
         }
 
         try {
@@ -144,10 +181,13 @@ export class BatchQuoteTool implements ITool {
                 }))
             };
         } catch (error) {
-            logger.error('批量行情查询失败', 'BatchQuoteTool', error as Error);
-            return { 
-                success: false, 
-                error: `批量查询失败：${error instanceof Error ? error.message : String(error)}` 
+            logger.error('[BatchQuoteTool] 批量行情查询失败', error);
+            return {
+                success: false,
+                error: {
+                    code: 'EXECUTION_ERROR',
+                    message: `批量查询失败：${error instanceof Error ? error.message : String(error)}`
+                } as ToolError
             };
         }
     }

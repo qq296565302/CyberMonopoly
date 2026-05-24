@@ -1,6 +1,6 @@
-import { ITool, ToolRegistry, ToolResult } from './base';
-import { IndexQuote, MarketDistribution as MarketDist, RankStock, SectorQuote } from '../../api/market';
-import { getIndexQuotes, getMarketDistribution as getMktDist, getIndustrySectors, getConceptSectors, getRankStocks } from '../../api/market';
+import { ITool, ToolRegistry, ToolResult, ToolError } from './base';
+import { IndexQuote, MarketDistribution, RankStock, SectorQuote, RankType } from '../../api/market';
+import { getIndexQuotes, getMarketDistribution, getIndustrySectors, getConceptSectors, getRankStocks } from '../../api/market';
 import { logger } from '../../utils/logger';
 
 /**
@@ -38,7 +38,10 @@ export class MarketOverviewTool implements ITool {
       if (!overview || overview.length === 0) {
         return {
           success: false,
-          error: '未获取到市场指数数据'
+          error: {
+            code: 'DATA_NOT_FOUND',
+            message: '未获取到市场指数数据'
+          } as ToolError
         };
       }
 
@@ -46,14 +49,9 @@ export class MarketOverviewTool implements ITool {
         code: index.code,
         name: index.name,
         price: index.price,
-        change: index.change,
         changePercent: index.changePercent,
-        volume: index.volume,
-        turnover: index.turnover,
-        high: index.high,
-        low: index.low,
-        open: index.open,
-        prevClose: index.prevClose
+        changeAmount: index.changeAmount,
+        market: index.market
       }));
 
       return {
@@ -68,7 +66,10 @@ export class MarketOverviewTool implements ITool {
       logger.error('[MarketOverviewTool] 获取市场概览失败', error);
       return {
         success: false,
-        error: `获取市场概览失败：${error instanceof Error ? error.message : String(error)}`
+        error: {
+          code: 'EXECUTION_ERROR',
+          message: `获取市场概览失败：${error instanceof Error ? error.message : String(error)}`
+        } as ToolError
       };
     }
   }
@@ -103,13 +104,16 @@ export class MarketDistributionTool implements ITool {
   async execute(params?: { market?: string }): Promise<ToolResult> {
     try {
       logger.info(`[MarketDistributionTool] 获取涨跌分布，市场：${params?.market || '全市场'}`);
-      
-      const distribution = await getMktDist();
-      
+
+      const distribution = await getMarketDistribution();
+
       if (!distribution) {
         return {
           success: false,
-          error: '未获取到涨跌分布数据'
+          error: {
+            code: 'DATA_NOT_FOUND',
+            message: '未获取到涨跌分布数据'
+          } as ToolError
         };
       }
 
@@ -131,7 +135,10 @@ export class MarketDistributionTool implements ITool {
       logger.error('[MarketDistributionTool] 获取涨跌分布失败', error);
       return {
         success: false,
-        error: `获取涨跌分布失败：${error instanceof Error ? error.message : String(error)}`
+        error: {
+          code: 'EXECUTION_ERROR',
+          message: `获取涨跌分布失败：${error instanceof Error ? error.message : String(error)}`
+        } as ToolError
       };
     }
   }
@@ -143,97 +150,88 @@ export class MarketDistributionTool implements ITool {
  */
 export class HotStocksTool implements ITool {
   name = 'get_hot_stocks';
-  description = '获取热门股票排行榜，支持涨幅榜、跌幅榜、成交额榜、换手率榜、资金流向榜';
-  
+  description = '获取热门股票排行榜，支持涨幅榜、跌幅榜、换手率榜、资金净流入榜、资金净流出榜';
+
   definition = {
-    type: 'object',
-    properties: {
-      type: {
-        type: 'string',
-        description: '排行榜类型',
-        enum: ['gain', 'loss', 'turnover', 'amount', 'inflow', 'outflow'],
-        default: 'gain'
-      },
-      limit: {
-        type: 'number',
-        description: '返回结果数量限制，默认 20',
-        default: 20
+    type: 'function' as const,
+    function: {
+      name: this.name,
+      description: this.description,
+      parameters: {
+        type: 'object' as const,
+        properties: {
+          rankType: {
+            type: 'string',
+            description: '排行榜类型',
+            enum: ['topGainers', 'topLosers', 'topTurnover', 'topNetInflow', 'topNetOutflow'],
+            default: 'topGainers'
+          },
+          limit: {
+            type: 'number',
+            description: '返回结果数量限制，默认 20',
+            default: 20
+          }
+        },
+        required: ['rankType']
       }
-    },
-    required: ['type']
+    }
   };
 
-  async execute(params: { type: string; limit?: number }): Promise<ToolResult> {
+  async execute(params: { rankType: string; limit?: number }): Promise<ToolResult> {
     try {
       const typeMap: Record<string, string> = {
-        gain: '涨幅榜',
-        loss: '跌幅榜',
-        turnover: '换手率榜',
-        amount: '成交额榜',
-        inflow: '资金净流入榜',
-        outflow: '资金净流出榜'
+        topGainers: '涨幅榜',
+        topLosers: '跌幅榜',
+        topTurnover: '换手率榜',
+        topNetInflow: '资金净流入榜',
+        topNetOutflow: '资金净流出榜'
       };
 
-      logger.info(`[HotStocksTool] 获取${typeMap[params.type] || params.type}，限制：${params.limit || 20}`);
-      
-      let stocks: HotStock[];
-      
-      switch (params.type) {
-        case 'gain':
-          stocks = await market.getTopGainers(params.limit || 20);
-          break;
-        case 'loss':
-          stocks = await market.getTopLosers(params.limit || 20);
-          break;
-        case 'turnover':
-          stocks = await market.getHighTurnoverStocks(params.limit || 20);
-          break;
-        case 'amount':
-          stocks = await market.getHighAmountStocks(params.limit || 20);
-          break;
-        case 'inflow':
-          stocks = await market.getTopMoneyInflow(params.limit || 20);
-          break;
-        case 'outflow':
-          stocks = await market.getTopMoneyOutflow(params.limit || 20);
-          break;
-        default:
-          return {
-            success: false,
-            error: {
-              code: 'INVALID_PARAM',
-              message: `无效的排行榜类型：${params.type}，支持：gain, loss, turnover, amount, inflow, outflow`
-            } as ToolError
-          };
+      const rankType = params.rankType as RankType;
+      const limit = params.limit || 20;
+
+      logger.info(`[HotStocksTool] 获取${typeMap[rankType] || rankType}，限制：${limit}`);
+
+      // 验证排行榜类型
+      if (!typeMap[rankType]) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_PARAM',
+            message: `无效的排行榜类型：${rankType}，支持：topGainers, topLosers, topTurnover, topNetInflow, topNetOutflow`
+          } as ToolError
+        };
       }
+
+      const stocks = await getRankStocks(rankType, limit);
 
       if (!stocks || stocks.length === 0) {
         return {
           success: false,
           error: {
             code: 'DATA_NOT_FOUND',
-            message: `未获取到${typeMap[params.type]}数据`
+            message: `未获取到${typeMap[rankType]}数据`
           } as ToolError
         };
       }
 
-      const formattedStocks = stocks.map(stock => ({
+      const formattedStocks = stocks.map((stock, index) => ({
+        rank: index + 1,
         code: stock.code,
         name: stock.name,
         price: stock.price,
         changePercent: stock.changePercent,
-        change: stock.change,
-        volume: stock.volume,
-        turnover: stock.turnover,
-        amount: stock.amount,
-        rank: stock.rank
+        changeAmount: stock.changeAmount,
+        turnoverRate: stock.turnoverRate,
+        netInflow: stock.netInflow,
+        turnover: stock.turnover
       }));
 
       return {
         success: true,
         data: {
-          type: params.type,
-          typeName: typeMap[params.type],
+          type: rankType,
+          typeName: typeMap[rankType],
           count: formattedStocks.length,
           stocks: formattedStocks,
           timestamp: new Date().toISOString()
@@ -258,21 +256,28 @@ export class HotStocksTool implements ITool {
  */
 export class SectorListTool implements ITool {
   name = 'get_sector_list';
-  description = '获取板块列表，支持一级行业、二级行业、概念板块，可查询板块行情和成分股';
-  
-  parameters = {
-    type: 'object',
-    properties: {
-      type: {
-        type: 'string',
-        description: '板块类型',
-        enum: ['industry1', 'industry2', 'concept'],
-        default: 'industry1'
-      },
-      limit: {
-        type: 'number',
-        description: '返回结果数量限制，默认 50',
-        default: 50
+  description = '获取板块列表，支持一级行业、二级行业、概念板块，可查询板块行情';
+
+  definition = {
+    type: 'function' as const,
+    function: {
+      name: this.name,
+      description: this.description,
+      parameters: {
+        type: 'object' as const,
+        properties: {
+          type: {
+            type: 'string',
+            description: '板块类型',
+            enum: ['industry1', 'industry2', 'concept'],
+            default: 'industry1'
+          },
+          limit: {
+            type: 'number',
+            description: '返回结果数量限制，默认 50',
+            default: 50
+          }
+        }
       }
     }
   };
@@ -287,30 +292,34 @@ export class SectorListTool implements ITool {
 
       const sectorType = params?.type || 'industry1';
       logger.info(`[SectorListTool] 获取${typeMap[sectorType]}，限制：${params?.limit || 50}`);
-      
-      let sectors: SectorInfo[];
-      
+
+      let sectors: SectorQuote[];
+
       switch (sectorType) {
         case 'industry1':
-          sectors = await market.getIndustrySectors('1', params?.limit || 50);
+          sectors = await getIndustrySectors(1);
           break;
         case 'industry2':
-          sectors = await market.getIndustrySectors('2', params?.limit || 50);
+          sectors = await getIndustrySectors(2);
           break;
         case 'concept':
-          sectors = await market.getConceptSectors(params?.limit || 50);
+          sectors = await getConceptSectors();
           break;
         default:
           return {
             success: false,
             error: {
               code: 'INVALID_PARAM',
-              message: `无效的板块类型：${sectorType}`
+              message: `无效的板块类型：${sectorType}，支持：industry1, industry2, concept`
             } as ToolError
           };
       }
 
-      if (!sectors || sectors.length === 0) {
+      // 按 limit 截断
+      const limit = params?.limit || 50;
+      const limitedSectors = sectors.slice(0, limit);
+
+      if (!limitedSectors || limitedSectors.length === 0) {
         return {
           success: false,
           error: {
@@ -320,15 +329,12 @@ export class SectorListTool implements ITool {
         };
       }
 
-      const formattedSectors = sectors.map(sector => ({
+      const formattedSectors = limitedSectors.map(sector => ({
         code: sector.code,
         name: sector.name,
         changePercent: sector.changePercent,
-        change: sector.change,
-        volume: sector.volume,
-        amount: sector.amount,
-        stockCount: sector.stockCount,
-        leadingStock: sector.leadingStock
+        changeAmount: sector.changeAmount,
+        price: sector.price
       }));
 
       return {

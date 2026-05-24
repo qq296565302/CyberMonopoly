@@ -46,6 +46,13 @@ const ALLOWED_HOSTS = [
     'satellitepull.cnr.cn',
     'www.cnr.cn',
 ];
+// 央广CDN的IP地址段（用于环球资讯等广播）
+const ALLOWED_IPS = [
+    '27.222.17.232',
+    '27.222.17.233',
+    '27.222.17.234',
+    '27.222.17.235',
+];
 class StreamProxy {
     constructor() {
         this.server = null;
@@ -103,12 +110,17 @@ class StreamProxy {
         }
         const hostname = pathParts[0];
         const remotePath = '/' + pathParts.slice(1).join('/') + urlObj.search;
-        if (!ALLOWED_HOSTS.includes(hostname)) {
+        // 检查是否是允许的主机或IP
+        const isAllowedHost = ALLOWED_HOSTS.includes(hostname);
+        const isAllowedIp = ALLOWED_IPS.includes(hostname);
+        if (!isAllowedHost && !isAllowedIp) {
             res.writeHead(403, { 'Content-Type': 'text/plain' });
             res.end('Host not allowed: ' + hostname);
             return;
         }
-        this.proxyRequest(hostname, remotePath, res, !HTTP_HOSTS.includes(hostname));
+        // IP地址使用HTTP，域名根据HTTP_HOSTS判断
+        const useHttps = isAllowedHost ? !HTTP_HOSTS.includes(hostname) : false;
+        this.proxyRequest(hostname, remotePath, res, useHttps);
     }
     proxyRequest(hostname, remotePath, res, useHttps = true) {
         const lib = useHttps ? https : http;
@@ -129,12 +141,16 @@ class StreamProxy {
                 const redirectUrl = proxyRes.headers.location;
                 try {
                     const parsed = new URL(redirectUrl);
-                    if (ALLOWED_HOSTS.includes(parsed.hostname)) {
-                        this.proxyRequest(parsed.hostname, parsed.pathname + parsed.search, res, parsed.protocol === 'https:');
+                    // 检查重定向目标是否是允许的主机或IP
+                    const isAllowedRedirectHost = ALLOWED_HOSTS.includes(parsed.hostname);
+                    const isAllowedRedirectIp = ALLOWED_IPS.includes(parsed.hostname);
+                    if (isAllowedRedirectHost || isAllowedRedirectIp) {
+                        const useHttps = isAllowedRedirectHost ? parsed.protocol === 'https:' : false;
+                        this.proxyRequest(parsed.hostname, parsed.pathname + parsed.search, res, useHttps);
                     }
                     else {
                         res.writeHead(403, { 'Content-Type': 'text/plain' });
-                        res.end('Redirect to disallowed host');
+                        res.end('Redirect to disallowed host: ' + parsed.hostname);
                     }
                 }
                 catch {

@@ -1,7 +1,6 @@
 import { ITool, ToolRegistry, ToolResult, ToolError } from './base';
-import { NewsItem, QuickNews } from '../../models';
-import { eastmoney } from '../../api/eastmoney';
-import { sina } from '../../api/sina';
+import { getStockNews } from '../../api/eastmoney';
+import { get7x24News } from '../../api/sina';
 import { logger } from '../../utils/logger';
 
 /**
@@ -11,29 +10,36 @@ import { logger } from '../../utils/logger';
 export class StockNewsTool implements ITool {
   name = 'get_stock_news';
   description = '获取个股的最新新闻资讯，包括公司公告、媒体报道、行业动态等';
-  
-  parameters = {
-    type: 'object',
-    properties: {
-      symbol: {
-        type: 'string',
-        description: '股票代码'
-      },
-      limit: {
-        type: 'number',
-        description: '返回结果数量限制，默认 20',
-        default: 20
+
+  definition = {
+    type: 'function' as const,
+    function: {
+      name: this.name,
+      description: this.description,
+      parameters: {
+        type: 'object' as const,
+        properties: {
+          symbol: {
+            type: 'string',
+            description: '股票代码'
+          },
+          limit: {
+            type: 'number',
+            description: '返回结果数量限制，默认 20',
+            default: 20
+          }
+        },
+        required: ['symbol']
       }
-    },
-    required: ['symbol']
+    }
   };
 
   async execute(params: { symbol: string; limit?: number }): Promise<ToolResult> {
     try {
       logger.info(`[StockNewsTool] 获取个股新闻：${params.symbol}, 限制：${params.limit || 20}`);
-      
-      const newsList = await eastmoney.getStockNews(params.symbol, params.limit || 20);
-      
+
+      const newsList = await getStockNews(params.symbol, 1, params.limit || 20);
+
       if (!newsList || newsList.length === 0) {
         return {
           success: false,
@@ -44,13 +50,12 @@ export class StockNewsTool implements ITool {
         };
       }
 
-      const formattedNews = newsList.map(news => ({
+      const formattedNews = newsList.map((news: any) => ({
         title: news.title,
-        summary: news.summary,
+        summary: news.digest,
         source: news.source,
-        publishTime: news.publishTime,
-        url: news.url,
-        type: news.type
+        publishTime: news.time,
+        url: news.url
       }));
 
       return {
@@ -81,20 +86,27 @@ export class StockNewsTool implements ITool {
 export class QuickNewsTool implements ITool {
   name = 'get_7x24_news';
   description = '获取 7x24 小时实时财经快讯，滚动更新的市场消息、政策解读、宏观经济数据等';
-  
-  parameters = {
-    type: 'object',
-    properties: {
-      limit: {
-        type: 'number',
-        description: '返回结果数量限制，默认 30',
-        default: 30
-      },
-      category: {
-        type: 'string',
-        description: '快讯分类：all(全部), stock(股票), finance(金融), macro(宏观)',
-        enum: ['all', 'stock', 'finance', 'macro'],
-        default: 'all'
+
+  definition = {
+    type: 'function' as const,
+    function: {
+      name: this.name,
+      description: this.description,
+      parameters: {
+        type: 'object' as const,
+        properties: {
+          limit: {
+            type: 'number',
+            description: '返回结果数量限制，默认 30',
+            default: 30
+          },
+          category: {
+            type: 'string',
+            description: '快讯分类：all(全部), stock(股票), finance(金融), macro(宏观)',
+            enum: ['all', 'stock', 'finance', 'macro'],
+            default: 'all'
+          }
+        }
       }
     }
   };
@@ -102,12 +114,11 @@ export class QuickNewsTool implements ITool {
   async execute(params?: { limit?: number; category?: string }): Promise<ToolResult> {
     try {
       const limit = params?.limit || 30;
-      const category = params?.category || 'all';
-      
-      logger.info(`[QuickNewsTool] 获取 7x24 快讯，分类：${category}, 限制：${limit}`);
-      
-      const newsList = await sina.get7x24News(limit, category);
-      
+
+      logger.info(`[QuickNewsTool] 获取 7x24 快讯，限制：${limit}`);
+
+      const newsList = await get7x24News(1, limit);
+
       if (!newsList || newsList.length === 0) {
         return {
           success: false,
@@ -118,20 +129,19 @@ export class QuickNewsTool implements ITool {
         };
       }
 
-      const formattedNews = newsList.map(news => ({
+      const formattedNews = newsList.map((news: any) => ({
         id: news.id,
         content: news.content,
         title: news.title,
         source: news.source,
-        publishTime: news.publishTime,
+        publishTime: news.publishTime || news.createTime,
         importance: news.importance,
-        tags: news.tags
+        tags: news.tags || news.tag
       }));
 
       return {
         success: true,
         data: {
-          category,
           count: formattedNews.length,
           news: formattedNews,
           timestamp: new Date().toISOString()

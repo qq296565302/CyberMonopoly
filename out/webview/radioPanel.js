@@ -281,7 +281,17 @@ class RadioPanel {
     function proxyUrl(originalUrl) {
       try {
         var u = new URL(originalUrl);
-        return 'http://127.0.0.1:' + proxyPort + '/' + u.hostname + u.pathname + u.search;
+        // 如果已经是代理URL，直接返回
+        if (u.hostname === '127.0.0.1' && u.port === String(proxyPort)) {
+          return originalUrl;
+        }
+        // 检查是否是允许的主机或IP
+        var allowedHosts = ['ngcdn001.cnr.cn', 'ngcdn002.cnr.cn', 'cnlive.cnr.cn', 'satellitepull.cnr.cn', 'www.cnr.cn'];
+        var allowedIps = ['27.222.17.232', '27.222.17.233', '27.222.17.234', '27.222.17.235'];
+        if (allowedHosts.indexOf(u.hostname) >= 0 || allowedIps.indexOf(u.hostname) >= 0) {
+          return 'http://127.0.0.1:' + proxyPort + '/' + u.hostname + u.pathname + u.search;
+        }
+        return originalUrl;
       } catch(e) {
         return originalUrl;
       }
@@ -340,6 +350,13 @@ class RadioPanel {
           lowLatencyMode: true,
           maxBufferLength: 10,
           maxMaxBufferLength: 30,
+          xhrSetup: function(xhr, reqUrl) {
+            // 拦截所有请求，将IP地址的URL转换为代理URL
+            var proxiedUrl = proxyUrl(reqUrl);
+            if (proxiedUrl !== reqUrl) {
+              xhr.open('GET', proxiedUrl, true);
+            }
+          },
         });
         hls.loadSource(url);
         hls.attachMedia(audio);

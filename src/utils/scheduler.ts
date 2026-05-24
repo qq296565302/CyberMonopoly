@@ -65,7 +65,7 @@ export class DataScheduler {
     ): Promise<T> {
         // 检查背压状态
         if (this.isBackpressured) {
-            logger.warn('调度器处于背压状态，请求可能被延迟', 'Scheduler');
+            logger.warn('[Scheduler] 调度器处于背压状态，请求可能被延迟');
         }
 
         return new Promise((resolve, reject) => {
@@ -93,7 +93,7 @@ export class DataScheduler {
                     existingTask.resolve = resolve;
                     existingTask.reject = reject;
                 }
-                logger.debug(`请求去重：${id}`, 'Scheduler');
+                logger.debug(`[Scheduler] 请求去重：${id}`);
                 return;
             }
 
@@ -145,7 +145,7 @@ export class DataScheduler {
         // 检查背压
         if (this.queue.length > this.options.backpressureThreshold && !this.isBackpressured) {
             this.isBackpressured = true;
-            logger.warn(`触发背压控制，队列长度：${this.queue.length}`, 'Scheduler');
+            logger.warn(`[Scheduler] 触发背压控制，队列长度：${this.queue.length}`);
         }
 
         // 尝试处理队列
@@ -161,7 +161,7 @@ export class DataScheduler {
         // 恢复背压状态
         if (this.isBackpressured && this.queue.length < this.options.backpressureThreshold / 2) {
             this.isBackpressured = false;
-            logger.info('背压状态解除', 'Scheduler');
+            logger.info('[Scheduler] 背压状态解除');
         }
     }
 
@@ -182,7 +182,7 @@ export class DataScheduler {
             
             if (isRetryable) {
                 task.retryCount++;
-                logger.warn(`请求重试 #${task.retryCount}: ${task.id}`, error);
+                logger.warn(`[Scheduler] 请求重试 #${task.retryCount}: ${task.id}`, error);
                 
                 // 延迟后重新入队
                 setTimeout(() => {
@@ -260,7 +260,7 @@ export class DataScheduler {
         this.pendingDedup.clear();
         this.dedupTimers.clear();
 
-        logger.info('调度器已清空', 'Scheduler');
+        logger.info('[Scheduler] 调度器已清空');
     }
 
     /**

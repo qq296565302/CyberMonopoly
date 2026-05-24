@@ -57,42 +57,45 @@ export class HttpClient {
             retryOptions
         } = options;
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
-
         try {
             return await withRetry(
                 async () => {
-                    const response = await fetch(url, {
-                        method,
-                        headers,
-                        body: method !== 'GET' ? body : undefined,
-                        signal: controller.signal
-                    });
+                    // 每次重试创建新的 AbortController，避免信号已失效
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-                    clearTimeout(timeoutId);
+                    try {
+                        const response = await fetch(url, {
+                            method,
+                            headers,
+                            body: method !== 'GET' ? body : undefined,
+                            signal: controller.signal
+                        });
 
-                    if (!response.ok) {
-                        const errorBody = await response.text().catch(() => '');
-                        throw AppError.http(response.status, url, errorBody);
-                    }
-
-                    const contentType = response.headers.get('content-type');
-                    if (contentType && contentType.includes('application/json')) {
-                        const data = await response.json();
-                        // 检查数据有效性
-                        if (data === null || data === undefined) {
-                            throw AppError.parse(url, '返回数据为空');
+                        if (!response.ok) {
+                            const errorBody = await response.text().catch(() => '');
+                            throw AppError.http(response.status, url, errorBody);
                         }
-                        return data as T;
-                    } else {
-                        const text = await response.text();
-                        // 尝试解析为 JSON，失败则返回原始文本
-                        try {
-                            return JSON.parse(text) as T;
-                        } catch {
-                            return text as unknown as T;
+
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            const data = await response.json();
+                            // 检查数据有效性
+                            if (data === null || data === undefined) {
+                                throw AppError.parse(url, '返回数据为空');
+                            }
+                            return data as T;
+                        } else {
+                            const text = await response.text();
+                            // 尝试解析为 JSON，失败则返回原始文本
+                            try {
+                                return JSON.parse(text) as T;
+                            } catch {
+                                return text as unknown as T;
+                            }
                         }
+                    } finally {
+                        clearTimeout(timeoutId);
                     }
                 },
                 retryOptions,
@@ -104,12 +107,12 @@ export class HttpClient {
             if (error instanceof AppError) {
                 throw error;
             }
-            
+
             // 处理 AbortError (超时)
             if (error instanceof Error && error.name === 'AbortError') {
                 throw AppError.timeout(url, timeout);
             }
-            
+
             // 处理网络错误
             if (error instanceof TypeError && error.message.includes('fetch')) {
                 throw new AppError(
@@ -125,8 +128,6 @@ export class HttpClient {
                 `未知错误：${error instanceof Error ? error.message : String(error)}`,
                 { cause: error as Error }
             );
-        } finally {
-            clearTimeout(timeoutId);
         }
     }
 

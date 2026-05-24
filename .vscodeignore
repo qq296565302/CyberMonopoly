@@ -1,0 +1,11 @@
+src/**
+out/**/*.map
+node_modules/**
+!node_modules/lightweight-charts/**
+!node_modules/marked/**
+.vscode/**
+.gitignore
+tsconfig.json
+DEVELOPMENT.md
+*.ts
+!out/**/*.js

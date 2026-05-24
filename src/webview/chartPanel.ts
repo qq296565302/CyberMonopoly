@@ -371,9 +371,12 @@ export class ChartViewProvider implements vscode.WebviewViewProvider {
           timeVisible: false,
           secondsVisible: false,
           tickMarkFormatter: function(time) {
-            if (typeof time === 'string') return time.slice(5);
+            if (typeof time === 'string') {
+              var parts = time.split('-');
+              return parts[0] + '/' + parts[1] + '/' + parts[2];
+            }
             if (typeof time === 'object' && time !== null) {
-              return String(time.month).padStart(2, '0') + '/' + String(time.day).padStart(2, '0');
+              return time.year + '/' + String(time.month).padStart(2, '0') + '/' + String(time.day).padStart(2, '0');
             }
             return '';
           },

@@ -1,4 +1,4 @@
-import { ITool, ToolContext, ToolRegistry, ToolResult } from './base';
+import { ITool, ToolRegistry, ToolResult, ToolError } from './base';
 import { FinanceIndicator, ResearchReport } from '../../api/eastmoney';
 import { getFinanceData, getResearchReports as fetchResearchReports } from '../../api/eastmoney';
 import { logger } from '../../utils/logger';
@@ -37,16 +37,22 @@ export class FinanceSummaryTool implements ITool {
       if (!/^\d{6}$/.test(code)) {
         return {
           success: false,
-          error: `无效的股票代码："${code}"，应为 6 位数字`
+          error: {
+            code: 'INVALID_PARAM',
+            message: `无效的股票代码："${code}"，应为 6 位数字`
+          } as ToolError
         };
       }
-      
+
       const indicators = await getFinanceData(code);
-      
+
       if (!indicators || indicators.length === 0) {
         return {
           success: false,
-          error: `未找到股票 ${code} 的财务数据`
+          error: {
+            code: 'DATA_NOT_FOUND',
+            message: `未找到股票 ${code} 的财务数据`
+          } as ToolError
         };
       }
 
@@ -73,7 +79,10 @@ export class FinanceSummaryTool implements ITool {
       logger.error('[FinanceSummaryTool] 获取财务数据失败', error);
       return {
         success: false,
-        error: `获取财务数据失败：${error instanceof Error ? error.message : String(error)}`
+        error: {
+          code: 'EXECUTION_ERROR',
+          message: `获取财务数据失败：${error instanceof Error ? error.message : String(error)}`
+        } as ToolError
       };
     }
   }
@@ -114,22 +123,28 @@ export class ResearchReportsTool implements ITool {
     try {
       const code = args.symbol.trim();
       const limit = typeof args.limit === 'number' ? Math.min(args.limit, 20) : 10;
-      
+
       logger.info(`[ResearchReportsTool] 获取研报：${code}, 限制：${limit}`);
-      
+
       if (!/^\d{6}$/.test(code)) {
         return {
           success: false,
-          error: `无效的股票代码："${code}"，应为 6 位数字`
+          error: {
+            code: 'INVALID_PARAM',
+            message: `无效的股票代码："${code}"，应为 6 位数字`
+          } as ToolError
         };
       }
-      
+
       const reports = await fetchResearchReports(code, 1, limit);
-      
+
       if (!reports || reports.length === 0) {
         return {
           success: false,
-          error: `未找到股票 ${code} 的研报数据`
+          error: {
+            code: 'DATA_NOT_FOUND',
+            message: `未找到股票 ${code} 的研报数据`
+          } as ToolError
         };
       }
 
@@ -155,7 +170,10 @@ export class ResearchReportsTool implements ITool {
       logger.error('[ResearchReportsTool] 获取研报失败', error);
       return {
         success: false,
-        error: `获取研报失败：${error instanceof Error ? error.message : String(error)}`
+        error: {
+          code: 'EXECUTION_ERROR',
+          message: `获取研报失败：${error instanceof Error ? error.message : String(error)}`
+        } as ToolError
       };
     }
   }

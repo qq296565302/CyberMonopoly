@@ -226,7 +226,7 @@ export async function toolGetFinanceSummary(code: string): Promise<FinanceSummar
 export interface ToolResult {
   success: boolean;
   data?: unknown;
-  error?: string;
+  error?: string | { code: string; message: string };
   info?: string;
 }
 
