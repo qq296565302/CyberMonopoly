@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { WatchlistProvider } from '../provider/watchlistProvider';
 
+/**
+ * 判断是否为 ETF/基金（需要显示3位小数）
+ */
+function isEtfOrFund(code: string): boolean {
+  return /^5[01268]/.test(code) || /^1[56]/.test(code);
+}
+
 export class StockTicker {
   private statusBar: vscode.StatusBarItem;
   private currentIndex = 0;
@@ -57,8 +64,9 @@ export class StockTicker {
 
     if (quote) {
       const sign = quote.changePercent >= 0 ? '↑' : '↓';
-      this.statusBar.text = `$(${quote.changePercent >= 0 ? 'trending-up' : 'trending-down'}) ${stock.name} ${quote.price.toFixed(2)} ${sign}${Math.abs(quote.changePercent).toFixed(2)}%`;
-      this.statusBar.tooltip = `${stock.name}(${stock.code}): ${quote.price} (${sign}${quote.changePercent.toFixed(2)}%)`;
+      const decimals = isEtfOrFund(stock.code) ? 3 : 2;
+      this.statusBar.text = `$(${quote.changePercent >= 0 ? 'trending-up' : 'trending-down'}) ${stock.name} ${quote.price.toFixed(decimals)} ${sign}${Math.abs(quote.changePercent).toFixed(2)}%`;
+      this.statusBar.tooltip = `${stock.name}(${stock.code}): ${quote.price.toFixed(decimals)} (${sign}${quote.changePercent.toFixed(2)}%)`;
     } else {
       this.statusBar.text = `$(sync~spin) ${stock.name} ...`;
       this.statusBar.tooltip = `${stock.name} 加载中...`;

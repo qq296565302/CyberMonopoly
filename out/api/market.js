@@ -41,39 +41,28 @@ exports.getIndustrySectors = getIndustrySectors;
 exports.getConceptSectors = getConceptSectors;
 exports.getRankStocks = getRankStocks;
 const https = __importStar(require("https"));
+const logger_1 = require("../utils/logger");
 const marketCache = new Map();
-/** 交易时间缓存 TTL：15 秒 */
+const marketBufCache = new Map();
 const TRADING_CACHE_TTL = 15000;
-/** 非交易时间缓存 TTL：5 分钟 */
 const NON_TRADING_CACHE_TTL = 300000;
-/**
- * 判断当前是否为 A 股交易时间
- * 交易时段：工作日 9:15-11:30, 13:00-15:00
- */
 function isATradingTime() {
     const now = new Date();
     const day = now.getDay();
-    // 周末不交易
     if (day === 0 || day === 6) {
         return false;
     }
     const hours = now.getHours();
     const minutes = now.getMinutes();
     const timeMinutes = hours * 60 + minutes;
-    // 上午交易时段 9:15 - 11:30（含集合竞价）
     if (timeMinutes >= 9 * 60 + 15 && timeMinutes <= 11 * 60 + 30) {
         return true;
     }
-    // 下午交易时段 13:00 - 15:00
     if (timeMinutes >= 13 * 60 && timeMinutes <= 15 * 60) {
         return true;
     }
     return false;
 }
-/**
- * 判断当前是否为港股交易时间
- * 交易时段：工作日 9:30-12:00（上午）, 13:00-16:00（下午）
- */
 function isHKTradingTime() {
     const now = new Date();
     const day = now.getDay();
@@ -83,167 +72,330 @@ function isHKTradingTime() {
     const hours = now.getHours();
     const minutes = now.getMinutes();
     const timeMinutes = hours * 60 + minutes;
-    // 上午交易时段 9:30 - 12:00
     if (timeMinutes >= 9 * 60 + 30 && timeMinutes <= 12 * 60) {
         return true;
     }
-    // 下午交易时段 13:00 - 16:00
     if (timeMinutes >= 13 * 60 && timeMinutes <= 16 * 60) {
         return true;
     }
     return false;
 }
-/** 获取当前应使用的缓存 TTL（A 股或港股任一处于交易时间即使用短缓存） */
 function getCacheTTL() {
     return (isATradingTime() || isHKTradingTime()) ? TRADING_CACHE_TTL : NON_TRADING_CACHE_TTL;
 }
-function marketFetch(url, timeoutMs = 10000, retries = 3) {
+async function marketFetch(url, timeoutMs = 15000, retries = 2) {
     const cached = marketCache.get(url);
     const ttl = getCacheTTL();
     if (cached && Date.now() - cached.time < ttl) {
-        return Promise.resolve(cached.data);
+        return cached.data;
     }
-    return new Promise((resolve, reject) => {
-        // 用闭包变量追踪当前活跃的 timeout，避免重试时旧 timer 泄露
-        let activeTimer = null;
-        const attempt = (remaining) => {
-            const options = {
-                headers: {
-                    'Referer': 'https://emweb.securities.eastmoney.com',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                }
-            };
-            const req = https.get(url, options, (res) => {
-                // HTTP 状态码校验：4xx/5xx 视为请求失败，触发重试
-                const statusCode = res.statusCode || 0;
-                if (statusCode >= 400) {
-                    res.resume(); // 消费响应体以释放 socket
-                    if (activeTimer) {
-                        clearTimeout(activeTimer);
-                        activeTimer = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const text = await new Promise((resolve, reject) => {
+                let settled = false;
+                const req = https.get(url, {
+                    headers: {
+                        'Referer': 'https://finance.sina.com.cn/',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    },
+                    timeout: timeoutMs,
+                }, (res) => {
+                    if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                        const redirectUrl = res.headers.location;
+                        res.resume();
+                        marketFetch(redirectUrl, timeoutMs, 0).then(resolve, reject);
+                        return;
                     }
-                    if (remaining > 0) {
-                        setTimeout(() => attempt(remaining - 1), 500);
+                    if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+                        res.resume();
+                        reject(new Error(`HTTP ${res.statusCode}`));
+                        return;
                     }
-                    else {
-                        reject(new Error(`HTTP ${statusCode}`));
+                    const chunks = [];
+                    res.on('data', (chunk) => chunks.push(chunk));
+                    res.on('end', () => {
+                        settled = true;
+                        resolve(Buffer.concat(chunks).toString('utf-8'));
+                    });
+                    res.on('error', (err) => {
+                        if (!settled) {
+                            settled = true;
+                            reject(err);
+                        }
+                    });
+                });
+                req.on('error', (err) => {
+                    if (!settled) {
+                        settled = true;
+                        reject(err);
                     }
-                    return;
-                }
-                const chunks = [];
-                res.on('data', chunk => chunks.push(chunk));
-                res.on('end', () => {
-                    if (activeTimer) {
-                        clearTimeout(activeTimer);
-                        activeTimer = null;
+                });
+                req.on('timeout', () => {
+                    if (!settled) {
+                        settled = true;
+                        req.destroy();
+                        reject(new Error('请求超时'));
                     }
-                    const data = Buffer.concat(chunks);
-                    marketCache.set(url, { data, time: Date.now() });
-                    resolve(data);
                 });
             });
-            // 清理上一次重试遗留的 timer，再设置新的
-            if (activeTimer) {
-                clearTimeout(activeTimer);
+            marketCache.set(url, { data: text, time: Date.now() });
+            return text;
+        }
+        catch (e) {
+            const msg = e?.message || '';
+            const isSocketError = msg.includes('socket hang up') ||
+                msg.includes('ECONNRESET') ||
+                msg.includes('ECONNREFUSED') ||
+                msg.includes('ETIMEDOUT') ||
+                msg.includes('请求超时');
+            if (isSocketError && attempt < retries) {
+                logger_1.logger.debug(`[marketFetch] retry ${attempt + 1}/${retries}: ${url} - ${msg}`);
+                await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                continue;
             }
-            activeTimer = setTimeout(() => {
-                activeTimer = null;
-                req.destroy();
-                if (remaining > 0) {
-                    setTimeout(() => attempt(remaining - 1), 500);
-                }
-                else {
-                    reject(new Error(`请求超时 (${timeoutMs}ms)`));
-                }
-            }, timeoutMs);
-            req.on('error', (err) => {
-                if (activeTimer) {
-                    clearTimeout(activeTimer);
-                    activeTimer = null;
-                }
-                if (remaining > 0) {
-                    setTimeout(() => attempt(remaining - 1), 500);
-                }
-                else {
-                    reject(err);
-                }
-            });
-        };
-        attempt(retries);
-    });
+            throw e;
+        }
+    }
+    throw new Error('marketFetch: exhausted retries');
 }
-const INDEX_CODES = [
-    { code: '000001', secid: '1.000001', name: '上证指数' },
-    { code: '399001', secid: '0.399001', name: '深证指数' },
-    { code: '399006', secid: '0.399006', name: '创业板指' },
-    { code: '000688', secid: '1.000688', name: '科创综指' },
-    { code: '000300', secid: '1.000300', name: '沪深300' },
-    { code: '000510', secid: '1.000510', name: '中证A500' },
-    { code: '899050', secid: '0.899050', name: '北证50' },
-    { code: 'HSI', secid: '100.HSI', name: '恒生指数' },
-    { code: 'HSCEI', secid: '100.HSCEI', name: '恒生国企指数' },
-    { code: 'HSTECH', secid: '100.HSTECH', name: '恒生科技指数' },
+async function marketFetchBuf(url, timeoutMs = 15000, retries = 2) {
+    const cached = marketBufCache.get(url);
+    const ttl = getCacheTTL();
+    if (cached && Date.now() - cached.time < ttl) {
+        return cached.data;
+    }
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const buf = await new Promise((resolve, reject) => {
+                let settled = false;
+                const req = https.get(url, {
+                    headers: {
+                        'Referer': 'https://finance.sina.com.cn/',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    },
+                    timeout: timeoutMs,
+                }, (res) => {
+                    if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+                        res.resume();
+                        reject(new Error(`HTTP ${res.statusCode}`));
+                        return;
+                    }
+                    const chunks = [];
+                    res.on('data', (chunk) => chunks.push(chunk));
+                    res.on('end', () => {
+                        settled = true;
+                        resolve(Buffer.concat(chunks));
+                    });
+                    res.on('error', (err) => {
+                        if (!settled) {
+                            settled = true;
+                            reject(err);
+                        }
+                    });
+                });
+                req.on('error', (err) => {
+                    if (!settled) {
+                        settled = true;
+                        reject(err);
+                    }
+                });
+                req.on('timeout', () => {
+                    if (!settled) {
+                        settled = true;
+                        req.destroy();
+                        reject(new Error('请求超时'));
+                    }
+                });
+            });
+            marketBufCache.set(url, { data: buf, time: Date.now() });
+            return buf;
+        }
+        catch (e) {
+            const msg = e?.message || '';
+            const isSocketError = msg.includes('socket hang up') ||
+                msg.includes('ECONNRESET') ||
+                msg.includes('ECONNREFUSED') ||
+                msg.includes('ETIMEDOUT') ||
+                msg.includes('请求超时');
+            if (isSocketError && attempt < retries) {
+                await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                continue;
+            }
+            throw e;
+        }
+    }
+    throw new Error('marketFetchBuf: exhausted retries');
+}
+const A_INDEX_CODES = [
+    { code: '000001', sinaPrefix: 'sh', name: '上证指数' },
+    { code: '399001', sinaPrefix: 'sz', name: '深证成指' },
+    { code: '399006', sinaPrefix: 'sz', name: '创业板指' },
+    { code: '000688', sinaPrefix: 'sh', name: '科创50' },
+    { code: '000300', sinaPrefix: 'sh', name: '沪深300' },
+    { code: '000510', sinaPrefix: 'sh', name: '中证A500' },
+    { code: '899050', sinaPrefix: 'bj', name: '北证50' },
+];
+const HK_INDEX_CODES = [
+    { code: 'HSI', tencentKey: 'r_hkHSI', name: '恒生指数' },
+    { code: 'HSCEI', tencentKey: 'r_hkHSCEI', name: '恒生国企指数' },
+    { code: 'HSTECH', tencentKey: 'r_hkHSTECH', name: '恒生科技指数' },
 ];
 async function getIndexQuotes() {
-    const fetchOne = async (idx) => {
-        const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${idx.secid}&fields=f43,f169,f170,f57,f58&_=${Date.now()}`;
-        const buffer = await marketFetch(url);
-        const data = JSON.parse(buffer.toString('utf-8'));
-        const d = data?.data;
-        if (!d) {
-            return null;
-        }
-        const price = Number(d.f43) || 0;
-        const changeAmount = Number(d.f169) || 0;
-        const changePercent = Number(d.f170) || 0;
-        if (price <= 0 && changePercent === 0 && changeAmount === 0) {
-            return null;
-        }
-        // secid 以 '100.' 开头为港股，其余为 A 股
-        // 东方财富 API 不带 fltt 参数时，A 股和港股均返回整数值（*100），统一除以 100
-        const market = idx.secid.startsWith('100.') ? 'HK' : 'A';
-        return {
-            code: idx.code,
-            name: idx.name,
-            price: price / 100,
-            changePercent: changePercent / 100,
-            changeAmount: changeAmount / 100,
-            market,
-        };
-    };
-    const settled = await Promise.allSettled(INDEX_CODES.map(idx => fetchOne(idx)));
     const results = [];
-    for (const item of settled) {
-        if (item.status === 'fulfilled' && item.value !== null) {
-            results.push(item.value);
+    try {
+        const sinaCodes = A_INDEX_CODES.map(idx => `${idx.sinaPrefix}${idx.code}`).join(',');
+        const url = `https://hq.sinajs.cn/list=${sinaCodes}`;
+        const buf = await marketFetchBuf(url);
+        const text = new TextDecoder('gbk').decode(buf);
+        const lines = text.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+            const m = line.match(/hq_str_(\w+)="(.*)"/);
+            if (!m)
+                continue;
+            const sinaCode = m[1];
+            const raw = m[2];
+            if (!raw)
+                continue;
+            const f = raw.split(',');
+            const name = f[0] || '';
+            const price = parseFloat(f[3]) || 0;
+            const prevClose = parseFloat(f[2]) || 0;
+            const codeMatch = A_INDEX_CODES.find(idx => sinaCode === `${idx.sinaPrefix}${idx.code}`);
+            if (!codeMatch)
+                continue;
+            const changeAmount = price > 0 && prevClose > 0 ? price - prevClose : 0;
+            const changePercent = prevClose > 0 && price > 0 ? (changeAmount / prevClose * 100) : 0;
+            results.push({
+                code: codeMatch.code,
+                name: name || codeMatch.name,
+                price,
+                changePercent,
+                changeAmount,
+                market: 'A',
+            });
         }
+    }
+    catch (e) {
+        logger_1.logger.error('[指数行情] 新浪A股接口失败', e);
+    }
+    try {
+        const tencentKeys = HK_INDEX_CODES.map(idx => idx.tencentKey).join(',');
+        const url = `https://qt.gtimg.cn/q=${tencentKeys}`;
+        const text = await marketFetch(url);
+        const lines = text.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+            const m = line.match(/v_r_(\w+)="(.*)"/);
+            if (!m)
+                continue;
+            const key = m[1];
+            const raw = m[2];
+            if (!raw)
+                continue;
+            const f = raw.split('~');
+            const hkMatch = HK_INDEX_CODES.find(idx => idx.tencentKey === `r_hk${key}` || key === idx.tencentKey.replace('r_', ''));
+            if (!hkMatch)
+                continue;
+            const price = parseFloat(f[3]) || 0;
+            const prevClose = parseFloat(f[4]) || 0;
+            const changePercent = parseFloat(f[32]) || 0;
+            const changeAmount = parseFloat(f[31]) || 0;
+            results.push({
+                code: hkMatch.code,
+                name: f[1] || hkMatch.name,
+                price,
+                changePercent,
+                changeAmount,
+                market: 'HK',
+            });
+        }
+    }
+    catch (e) {
+        logger_1.logger.error('[指数行情] 腾讯港股接口失败', e);
     }
     return results;
 }
+function getLimitPct(code, name) {
+    if (name.startsWith('ST') || name.startsWith('*ST'))
+        return 5;
+    if (code.startsWith('688'))
+        return 20;
+    if (code.startsWith('300'))
+        return 20;
+    if (code.startsWith('8') || code.startsWith('4'))
+        return 30;
+    return 10;
+}
+function isLimitUp(price, prevClose, code, name) {
+    if (!prevClose || prevClose <= 0 || !price || price <= 0)
+        return false;
+    const limit = getLimitPct(code, name) / 100;
+    const limitPrice = Math.round(prevClose * (1 + limit) * 100) / 100;
+    return price >= limitPrice - 0.005;
+}
+function isLimitDown(price, prevClose, code, name) {
+    if (!prevClose || prevClose <= 0 || !price || price <= 0)
+        return false;
+    const limit = getLimitPct(code, name) / 100;
+    const limitPrice = Math.round(prevClose * (1 - limit) * 100) / 100;
+    return price <= limitPrice + 0.005;
+}
+async function fetchSinaStockPage(node, page, num, sort, asc) {
+    const url = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=${page}&num=${num}&sort=${sort}&asc=${asc}&node=${node}&_s_r_a=auto`;
+    const text = await marketFetch(url);
+    try {
+        return JSON.parse(text);
+    }
+    catch {
+        return [];
+    }
+}
 async function getMarketDistribution() {
-    // 使用 ulist.np 接口获取涨跌分布（stock/get 接口的 f104-f108 已失效）
-    const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f6,f104,f105,f106,f107,f108&secids=1.000001,0.399106&_=${Date.now()}`;
     let upCount = 0, downCount = 0, flatCount = 0;
     let limitUpCount = 0, limitDownCount = 0;
     let turnover = 0;
     try {
-        const buffer = await marketFetch(url);
-        const data = JSON.parse(buffer.toString('utf-8'));
-        const list = data?.data?.diff || [];
-        for (const d of list) {
-            upCount += Number(d.f104) || 0;
-            downCount += Number(d.f105) || 0;
-            flatCount += Number(d.f106) || 0;
-            limitUpCount += Number(d.f107) || 0;
-            const ld = d.f108;
-            if (typeof ld === 'number') {
-                limitDownCount += ld;
-            }
-            turnover += Number(d.f6) || 0;
+        const PAGE_SIZE = 80;
+        const firstPage = await fetchSinaStockPage('hs_a', 1, PAGE_SIZE, 'changepercent', 0);
+        if (firstPage.length === 0) {
+            logger_1.logger.warn('[涨跌分布] 新浪接口返回空数据');
+            return { upCount: 0, downCount: 0, flatCount: 0, limitUpCount: 0, limitDownCount: 0, turnover: 0, turnoverDiff: 0 };
         }
+        const processItem = (item) => {
+            const pct = item.changepercent || 0;
+            const price = parseFloat(item.trade) || 0;
+            const prevClose = parseFloat(item.settlement) || 0;
+            const code = item.code || '';
+            if (pct > 0)
+                upCount++;
+            else if (pct < 0)
+                downCount++;
+            else
+                flatCount++;
+            if (isLimitUp(price, prevClose, code, item.name))
+                limitUpCount++;
+            if (isLimitDown(price, prevClose, code, item.name))
+                limitDownCount++;
+            turnover += item.amount || 0;
+        };
+        for (const item of firstPage) {
+            processItem(item);
+        }
+        const totalPages = Math.ceil(5500 / PAGE_SIZE);
+        const pagePromises = [];
+        for (let pn = 2; pn <= totalPages; pn++) {
+            pagePromises.push(fetchSinaStockPage('hs_a', pn, PAGE_SIZE, 'changepercent', 0)
+                .then(pageData => {
+                for (const item of pageData) {
+                    processItem(item);
+                }
+            })
+                .catch(() => { }));
+        }
+        await Promise.allSettled(pagePromises);
+        logger_1.logger.debug(`[涨跌分布] 新浪接口统计: up=${upCount} down=${downCount} flat=${flatCount} limitUp=${limitUpCount} limitDown=${limitDownCount} turnover=${turnover}`);
     }
-    catch {
-        // skip
+    catch (e) {
+        logger_1.logger.error('[涨跌分布] API调用失败', e);
     }
     const turnoverDiff = await getTurnoverDiff(turnover);
     return {
@@ -260,140 +412,170 @@ async function getTurnoverDiff(currentTurnover) {
     try {
         const now = new Date();
         const dayOfWeek = now.getDay();
-        // 周末不计算差额
         if (dayOfWeek === 0 || dayOfWeek === 6) {
             return 0;
         }
-        const hh = String(now.getHours()).padStart(2, '0');
-        const mm = String(now.getMinutes()).padStart(2, '0');
-        const currentTime = `${hh}:${mm}`;
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const todayStr = `${y}-${m}-${d}`;
-        const secids = ['1.000001', '0.399001'];
-        let yesterdayTurnoverAtSameTime = 0;
-        let hasYesterdayData = false;
-        for (const secid of secids) {
-            const url = `https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=2&_=${Date.now()}`;
-            const buffer = await marketFetch(url);
-            const data = JSON.parse(buffer.toString('utf-8'));
-            const trends = data?.data?.trends || [];
-            if (trends.length === 0)
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        const timeMinutes = hours * 60 + minutes;
+        if (timeMinutes < 9 * 60 + 30)
+            return 0;
+        let elapsedTradingMinutes;
+        if (timeMinutes <= 11 * 60 + 30) {
+            elapsedTradingMinutes = timeMinutes - (9 * 60 + 30);
+        }
+        else if (timeMinutes <= 13 * 60) {
+            elapsedTradingMinutes = 120;
+        }
+        else if (timeMinutes <= 15 * 60) {
+            elapsedTradingMinutes = 120 + (timeMinutes - 13 * 60);
+        }
+        else {
+            elapsedTradingMinutes = 240;
+        }
+        const timeProportion = elapsedTradingMinutes / 240;
+        const indexCodes = ['sh000001', 'sz399001'];
+        let todayIndexAmount = 0;
+        let todayIndexVolume = 0;
+        let yesterdayIndexVolume = 0;
+        for (const code of indexCodes) {
+            const minuteUrl = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${code}`;
+            const buf = await marketFetchBuf(minuteUrl);
+            const text = buf.toString('utf-8');
+            const data = JSON.parse(text);
+            const stockData = data.data?.[code];
+            if (!stockData)
                 continue;
-            // 按日期分组，避免跨日数据混淆
-            const dateGroups = new Map();
-            for (const t of trends) {
-                const dateStr = t.split(',')[0].split(' ')[0];
-                const group = dateGroups.get(dateStr);
-                if (group) {
-                    group.push(t);
-                }
-                else {
-                    dateGroups.set(dateStr, [t]);
+            const minuteData = stockData.data?.data || [];
+            if (minuteData.length > 0) {
+                const lastParts = minuteData[minuteData.length - 1].split(' ');
+                todayIndexVolume += parseFloat(lastParts[2]) || 0;
+                todayIndexAmount += parseFloat(lastParts[3]) || 0;
+            }
+            const klineUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?code=${code}&_var=kline_day&param=${code},day,,,3,qfq`;
+            const klineText = await marketFetch(klineUrl);
+            const jsonMatch = klineText.match(/\{.*\}/s);
+            if (jsonMatch) {
+                const klineData = JSON.parse(jsonMatch[0]);
+                const dayArr = klineData.data?.[code]?.day || klineData.data?.[code]?.qfqday;
+                if (dayArr && dayArr.length >= 2) {
+                    const yesterdayEntry = dayArr[dayArr.length - 2];
+                    yesterdayIndexVolume += parseFloat(yesterdayEntry[5]) || 0;
                 }
             }
-            const dates = Array.from(dateGroups.keys()).sort();
-            if (dates.length < 2)
-                continue;
-            // ndays=2 返回最近2个交易日数据
-            // 最后一个日期应为今天（交易日），倒数第二个为昨日
-            const todayDate = dates[dates.length - 1];
-            const yesterdayDate = dates[dates.length - 2];
-            // 仅在今天有数据时才计算差额（节假日后/盘前数据不匹配时跳过）
-            if (todayDate !== todayStr)
-                continue;
-            const yesterdayTrends = dateGroups.get(yesterdayDate);
-            if (yesterdayTrends.length === 0)
-                continue;
-            // 获取同一时刻的昨日成交额
-            const yAtSameTime = yesterdayTrends.filter(t => {
-                const time = t.split(',')[0].split(' ')[1];
-                return time <= currentTime;
-            });
-            if (yAtSameTime.length === 0)
-                continue;
-            const yLastParts = yAtSameTime[yAtSameTime.length - 1].split(',');
-            yesterdayTurnoverAtSameTime += Number(yLastParts[4]) || 0;
-            hasYesterdayData = true;
         }
-        if (!hasYesterdayData)
+        if (todayIndexVolume === 0 || todayIndexAmount === 0)
             return 0;
-        return currentTurnover - yesterdayTurnoverAtSameTime;
+        const avgPricePerVol = todayIndexAmount / todayIndexVolume;
+        const yesterdayIndexAmount = yesterdayIndexVolume * avgPricePerVol;
+        const yesterdayAmountAtSameTime = yesterdayIndexAmount * timeProportion;
+        const ratio = currentTurnover / todayIndexAmount;
+        return Math.round(currentTurnover - yesterdayAmountAtSameTime * ratio);
     }
     catch {
         return 0;
     }
 }
+function decodeGbkBuffer(buf) {
+    try {
+        return new TextDecoder('gbk').decode(buf);
+    }
+    catch {
+        return buf.toString('utf-8');
+    }
+}
+async function fetchSinaSectors(param) {
+    const url = `https://money.finance.sina.com.cn/q/view/newFLJK.php?param=${param}`;
+    const buf = await marketFetchBuf(url);
+    const text = decodeGbkBuffer(buf);
+    const varMatch = text.match(/=\s*(\{.*\})/s);
+    if (!varMatch)
+        return [];
+    try {
+        const obj = JSON.parse(varMatch[1]);
+        const results = [];
+        for (const key of Object.keys(obj)) {
+            const val = obj[key];
+            if (typeof val !== 'string')
+                continue;
+            const parts = val.split(',');
+            if (parts.length < 6)
+                continue;
+            const name = parts[1] || '';
+            const avgPrice = parseFloat(parts[3]) || 0;
+            const avgChange = parseFloat(parts[4]) || 0;
+            const changePercent = parseFloat(parts[5]) || 0;
+            results.push({
+                code: key,
+                name,
+                changePercent,
+                changeAmount: avgChange,
+                price: avgPrice,
+            });
+        }
+        return results.sort((a, b) => b.changePercent - a.changePercent);
+    }
+    catch {
+        return [];
+    }
+}
 async function getIndustrySectors(level = 1) {
-    const fs = level === 1 ? 'm:90+t:2' : 'm:90+t:3';
-    const url = `https://push2.eastmoney.com/api/qt/clist/get?cb=&pn=1&pz=200&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=${fs}&fields=f2,f3,f4,f12,f14&_=${Date.now()}`;
-    const buffer = await marketFetch(url);
-    const data = JSON.parse(buffer.toString('utf-8'));
-    const list = data?.data?.diff || [];
-    return list.map((item) => ({
-        code: String(item.f12 || ''),
-        name: String(item.f14 || ''),
-        changePercent: Number(item.f3) || 0,
-        changeAmount: Number(item.f4) || 0,
-        price: Number(item.f2) || 0,
-    }));
+    const param = level === 1 ? 'industry' : 'industry2';
+    try {
+        return await fetchSinaSectors(param);
+    }
+    catch (e) {
+        logger_1.logger.error('[行业板块] API调用失败', e);
+        return [];
+    }
 }
 async function getConceptSectors() {
-    const url = `https://push2.eastmoney.com/api/qt/clist/get?cb=&pn=1&pz=500&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:90+t:3+f:!50&fields=f2,f3,f4,f12,f14&_=${Date.now()}`;
-    const buffer = await marketFetch(url);
-    const data = JSON.parse(buffer.toString('utf-8'));
-    const list = data?.data?.diff || [];
-    return list.map((item) => ({
-        code: String(item.f12 || ''),
-        name: String(item.f14 || ''),
-        changePercent: Number(item.f3) || 0,
-        changeAmount: Number(item.f4) || 0,
-        price: Number(item.f2) || 0,
-    }));
+    try {
+        return await fetchSinaSectors('class');
+    }
+    catch (e) {
+        logger_1.logger.error('[概念板块] API调用失败', e);
+        return [];
+    }
 }
 async function getRankStocks(rankType, count = 20) {
-    let fid;
-    let po;
-    let extraFields = '';
-    switch (rankType) {
-        case 'topGainers':
-            fid = 'f3';
-            po = '1';
-            break;
-        case 'topLosers':
-            fid = 'f3';
-            po = '0';
-            break;
-        case 'topNetInflow':
-            fid = 'f62';
-            po = '1';
-            extraFields = ',f62';
-            break;
-        case 'topNetOutflow':
-            fid = 'f62';
-            po = '0';
-            extraFields = ',f62';
-            break;
-        case 'topTurnover':
-            fid = 'f6';
-            po = '1';
-            extraFields = ',f6';
-            break;
+    try {
+        let sort;
+        let asc;
+        switch (rankType) {
+            case 'topGainers':
+                sort = 'changepercent';
+                asc = 0;
+                break;
+            case 'topLosers':
+                sort = 'changepercent';
+                asc = 1;
+                break;
+            case 'topNetInflow':
+            case 'topNetOutflow':
+                sort = 'amount';
+                asc = rankType === 'topNetOutflow' ? 1 : 0;
+                break;
+            case 'topTurnover':
+                sort = 'amount';
+                asc = 0;
+                break;
+        }
+        const items = await fetchSinaStockPage('hs_a', 1, count, sort, asc);
+        return items.map((item) => ({
+            code: item.code || '',
+            name: item.name || '',
+            price: parseFloat(item.trade) || 0,
+            changePercent: item.changepercent || 0,
+            changeAmount: item.pricechange || 0,
+            turnoverRate: item.turnoverratio || 0,
+            netInflow: 0,
+            turnover: item.amount || 0,
+        }));
     }
-    const url = `https://push2.eastmoney.com/api/qt/clist/get?cb=&pn=1&pz=${count}&po=${po}&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=${fid}&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f2,f3,f4,f8,f12,f14${extraFields}&_=${Date.now()}`;
-    const buffer = await marketFetch(url);
-    const data = JSON.parse(buffer.toString('utf-8'));
-    const list = data?.data?.diff || [];
-    return list.map((item) => ({
-        code: String(item.f12 || ''),
-        name: String(item.f14 || ''),
-        price: Number(item.f2) || 0,
-        changePercent: Number(item.f3) || 0,
-        changeAmount: Number(item.f4) || 0,
-        turnoverRate: Number(item.f8) || 0,
-        netInflow: Number(item.f62) || 0,
-        turnover: Number(item.f6) || 0,
-    }));
+    catch (e) {
+        logger_1.logger.error('[排行] API调用失败', e);
+        return [];
+    }
 }
 //# sourceMappingURL=market.js.map

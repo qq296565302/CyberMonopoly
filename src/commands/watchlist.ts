@@ -194,5 +194,49 @@ export function registerWatchlistCommands(
     })
   );
 
+  disposables.push(
+    vscode.commands.registerCommand('cyberMonopoly.setAlertPrice', async (item) => {
+      const info = extractStockInfo(item);
+      if (!info) return;
+
+      const stocks = provider.getStocks();
+      const stock = stocks.find(s => s.code === info.code);
+      const currentPrice = stock?.alertPrice;
+
+      const quickPick = vscode.window.createQuickPick();
+      quickPick.title = `设置 ${info.name} (${info.code}) 目标价提醒`;
+      quickPick.placeholder = currentPrice
+        ? `当前目标价: ¥${currentPrice.toFixed(2)}，输入新价格或输入 0 清除`
+        : '输入目标价格，例如 180.50';
+      quickPick.ignoreFocusOut = true;
+
+      quickPick.onDidAccept(async () => {
+        const value = quickPick.value.trim();
+        quickPick.hide();
+
+        if (!value) return;
+
+        const price = parseFloat(value);
+        if (isNaN(price)) {
+          vscode.window.showWarningMessage('请输入有效的数字价格');
+          return;
+        }
+
+        if (price === 0) {
+          await provider.updateAlertPrice(info.code, undefined);
+          vscode.window.showInformationMessage(`已清除 ${info.name} 的目标价提醒`);
+        } else if (price > 0) {
+          await provider.updateAlertPrice(info.code, price);
+          vscode.window.showInformationMessage(`已设置 ${info.name} 目标价: ¥${price.toFixed(2)}`);
+        } else {
+          vscode.window.showWarningMessage('价格必须大于 0');
+        }
+      });
+
+      quickPick.onDidHide(() => quickPick.dispose());
+      quickPick.show();
+    })
+  );
+
   return disposables;
 }

@@ -1,58 +1,100 @@
 const https = require('https');
+
 function fetch(url) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      headers: {
-        'Referer': 'https://emweb.securities.eastmoney.com',
-        'User-Agent': 'Mozilla/5.0'
-      }
+    https.get(url, {
+      headers: { 'Referer': 'https://finance.sina.com.cn/', 'User-Agent': 'Mozilla/5.0' },
+      timeout: 8000
     }, res => {
       const chunks = [];
       res.on('data', c => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks).toString()));
-    });
-    req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    }).on('error', reject);
   });
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function test() {
-  // Test stock/get for Shanghai Composite with distribution fields
-  const secids = [
-    { name: '上证指数', secid: '1.000001' },
-    { name: '深证综指', secid: '0.399106' },
-    { name: '深证成指', secid: '0.399001' },
-  ];
-
-  for (const idx of secids) {
-    try {
-      console.log(`=== ${idx.name} (${idx.secid}) ===`);
-      const r = await fetch('https://push2.eastmoney.com/api/qt/stock/get?secid=' + idx.secid + '&fields=f43,f104,f105,f106,f107,f108,f6,f169,f170&_=' + Date.now());
-      const d = JSON.parse(r);
-      const data = d && d.data;
-      if (data) {
-        console.log('  f43(价格)=', data.f43, ' f104(涨)=', data.f104, ' f105(跌)=', data.f105, ' f106(平)=', data.f106, ' f107(涨停)=', data.f107, ' f108(跌停)=', data.f108, ' f6(成交额)=', data.f6);
-      } else {
-        console.log('  无数据');
-      }
-    } catch(e) {
-      console.log('  失败:', e.message);
-    }
-    await sleep(2000);
-  }
-
-  // Test clist API for counting up/down/flat stocks
-  try {
-    console.log('\n=== 用clist统计涨跌家数 ===');
-    const url = 'https://push2.eastmoney.com/api/qt/clist/get?cb=&pn=1&pz=1&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f2,f3,f12,f14&_=' + Date.now();
-    const r = await fetch(url);
-    const d = JSON.parse(r);
-    console.log('A股总数:', d && d.data ? d.data.total : 0);
-  } catch(e) {
-    console.log('clist统计失败:', e.message);
-  }
+function fetchBuf(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: { 'Referer': 'https://finance.sina.com.cn/', 'User-Agent': 'Mozilla/5.0' },
+      timeout: 8000
+    }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    }).on('error', reject);
+  });
 }
 
-test().catch(console.error);
+async function main() {
+  const indexCodes = ['sh000001', 'sz399001'];
+  let todayIndexAmount = 0;
+  let todayIndexVolume = 0;
+  let yesterdayIndexVolume = 0;
+
+  for (const code of indexCodes) {
+    const minuteUrl = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${code}`;
+    const buf = await fetchBuf(minuteUrl);
+    const text = buf.toString('utf-8');
+    const data = JSON.parse(text);
+    const stockData = data.data?.[code];
+    if (!stockData) continue;
+
+    const minuteData = stockData.data?.data || [];
+    if (minuteData.length > 0) {
+      const lastParts = minuteData[minuteData.length - 1].split(' ');
+      todayIndexVolume += parseFloat(lastParts[2]) || 0;
+      todayIndexAmount += parseFloat(lastParts[3]) || 0;
+    }
+
+    const klineUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?code=${code}&_var=kline_day&param=${code},day,,,3,qfq`;
+    const klineText = await fetch(klineUrl);
+    const jsonMatch = klineText.match(/\{.*\}/s);
+    if (jsonMatch) {
+      const klineData = JSON.parse(jsonMatch[0]);
+      const dayArr = klineData.data?.[code]?.day || klineData.data?.[code]?.qfqday;
+      if (dayArr && dayArr.length >= 2) {
+        const yesterdayEntry = dayArr[dayArr.length - 2];
+        yesterdayIndexVolume += parseFloat(yesterdayEntry[5]) || 0;
+        console.log(`${code} yesterday: date=${yesterdayEntry[0]} volume=${yesterdayEntry[5]}`);
+      }
+    }
+  }
+
+  console.log(`\nToday index: volume=${todayIndexVolume} amount=${todayIndexAmount}`);
+  console.log(`Yesterday index: volume=${yesterdayIndexVolume}`);
+
+  const avgPricePerVol = todayIndexAmount / todayIndexVolume;
+  const yesterdayIndexAmount = yesterdayIndexVolume * avgPricePerVol;
+  console.log(`\navgPricePerVol = ${avgPricePerVol.toFixed(4)}`);
+  console.log(`Estimated yesterday total amount = ${yesterdayIndexAmount.toFixed(0)} (${(yesterdayIndexAmount / 1e8).toFixed(2)}亿)`);
+
+  // Simulate at 14:00 (3.5 hours into trading = 210 minutes)
+  const elapsedMinutes = 210;
+  const timeProportion = elapsedMinutes / 240;
+  const yesterdayAmountAtSameTime = yesterdayIndexAmount * timeProportion;
+  console.log(`\nAt 14:00 (proportion=${(timeProportion * 100).toFixed(1)}%):`);
+  console.log(`  Yesterday same-time amount = ${yesterdayAmountAtSameTime.toFixed(0)} (${(yesterdayAmountAtSameTime / 1e8).toFixed(2)}亿)`);
+
+  // Get actual today's market turnover from Sina
+  const buf = await fetchBuf('https://hq.sinajs.cn/list=sh000001,sz399001');
+  const text = new TextDecoder('gbk').decode(buf);
+  const lines = text.split('\n').filter(l => l.trim());
+  let totalAmount = 0;
+  for (const line of lines) {
+    const m = line.match(/hq_str_(\w+)="(.*)"/);
+    if (m) {
+      const parts = m[2].split(',');
+      totalAmount += parseFloat(parts[9]) || 0;
+    }
+  }
+  console.log(`\nActual today index amount = ${totalAmount} (${(totalAmount / 1e8).toFixed(2)}亿)`);
+  console.log(`Tencent minute amount = ${todayIndexAmount} (${(todayIndexAmount / 1e8).toFixed(2)}亿)`);
+
+  const ratio = totalAmount / todayIndexAmount;
+  const diff = Math.round(totalAmount - yesterdayAmountAtSameTime * ratio);
+  console.log(`\nRatio (total/market) = ${ratio.toFixed(4)}`);
+  console.log(`Estimated turnover diff = ${diff} (${(diff / 1e8).toFixed(2)}亿)`);
+}
+
+main().catch(e => console.log('ERR:', e.message));

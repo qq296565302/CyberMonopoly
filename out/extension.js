@@ -173,6 +173,10 @@ async function doActivateAsync(context) {
             clearInterval(newsTimer); } });
     await (0, logger_1.withErrorHandling)(() => watchlistProvider.refresh(), '自选股刷新失败');
     syncAlertRules();
+    // 监听目标价变更，同步更新 AlertManager
+    watchlistProvider.onAlertRulesChanged(() => {
+        syncAlertRules();
+    });
     await (0, logger_1.withErrorHandling)(() => newsProvider.refresh(), '快讯刷新失败');
     await (0, logger_1.withErrorHandling)(() => marketProvider.refresh(), '行情刷新失败');
     const config = vscode.workspace.getConfiguration('cyberMonopoly');

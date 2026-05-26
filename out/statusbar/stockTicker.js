@@ -35,6 +35,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StockTicker = void 0;
 const vscode = __importStar(require("vscode"));
+/**
+ * 判断是否为 ETF/基金（需要显示3位小数）
+ */
+function isEtfOrFund(code) {
+    return /^5[01268]/.test(code) || /^1[56]/.test(code);
+}
 class StockTicker {
     constructor(provider) {
         this.provider = provider;
@@ -79,8 +85,9 @@ class StockTicker {
         const quote = quotes.get(stock.code);
         if (quote) {
             const sign = quote.changePercent >= 0 ? '↑' : '↓';
-            this.statusBar.text = `$(${quote.changePercent >= 0 ? 'trending-up' : 'trending-down'}) ${stock.name} ${quote.price.toFixed(2)} ${sign}${Math.abs(quote.changePercent).toFixed(2)}%`;
-            this.statusBar.tooltip = `${stock.name}(${stock.code}): ${quote.price} (${sign}${quote.changePercent.toFixed(2)}%)`;
+            const decimals = isEtfOrFund(stock.code) ? 3 : 2;
+            this.statusBar.text = `$(${quote.changePercent >= 0 ? 'trending-up' : 'trending-down'}) ${stock.name} ${quote.price.toFixed(decimals)} ${sign}${Math.abs(quote.changePercent).toFixed(2)}%`;
+            this.statusBar.tooltip = `${stock.name}(${stock.code}): ${quote.price.toFixed(decimals)} (${sign}${quote.changePercent.toFixed(2)}%)`;
         }
         else {
             this.statusBar.text = `$(sync~spin) ${stock.name} ...`;

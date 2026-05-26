@@ -1115,173 +1115,86 @@ export class AiChatPanel {
   }
 
   /**
-   * 解析AI回复中的工具调用格式
-   * 格式：```tool\n工具名: 参数\n```
-   */
-  private parseToolCalls(content: string): { toolCalls: { name: string; args: string }[]; cleanedContent: string } {
-    const toolCalls: { name: string; args: string }[] = [];
-    const toolRegex = /```tool\s*\n([^`]+)```/g;
-    let match;
-
-    const knownTools = [
-      'get_stock_quote', 'get_kline_summary', 'get_intraday_data', 'get_finance_summary',
-      'get_stock_news', 'get_research_reports', 'search_stock', 'get_market_overview',
-      'get_market_distribution', 'get_hot_stocks', 'get_sector_list', 'get_7x24_news', 'open_chart'
-    ];
-
-    while ((match = toolRegex.exec(content)) !== null) {
-      const toolBlock = match[1].trim();
-      const lines = toolBlock.split('\n').map(l => l.trim()).filter(l => l);
-
-      for (const line of lines) {
-        const colonIdx = line.indexOf(':');
-        if (colonIdx > 0) {
-          const name = line.substring(0, colonIdx).trim();
-          const args = line.substring(colonIdx + 1).trim();
-          toolCalls.push({ name, args });
-        } else {
-          // 没有冒号，尝试按空格分割
-          const parts = line.split(/\s+/);
-          const name = parts[0];
-          const args = parts.slice(1).join(' ');
-          toolCalls.push({ name, args });
-        }
-      }
-    }
-
-    // 移除工具调用块，保留其他内容
-    const cleanedContent = content.replace(toolRegex, '').trim();
-    return { toolCalls, cleanedContent };
-  }
-
-  /**
    * 带工具调用循环的流式对话
    *
-   * 流程（兼容不支持 Function Calling 的服务端）：
-   * 1. 发送消息给 LLM（不带 tools 参数）
-   * 2. 解析回复中的工具调用格式（```tool ... ```）
-   * 3. 如果有工具调用，执行工具并将结果作为用户消息发送
-   * 4. 重复直到 LLM 返回纯文本（无工具调用）
+   * 使用 OpenAI Function Calling 协议：
+   * 1. 发送消息给 LLM（带 tools 参数）
+   * 2. 如果 LLM 返回 tool_calls，执行工具并将结果以 role=tool 回传
+   * 3. 重复直到 LLM 返回纯文本（无 tool_calls）
+   *
+   * 流式输出时，仅推送最终文本内容到前端，不推送工具调用过程
    */
-  private async streamWithToolLoop(_tools: ReturnType<typeof getToolDefinitions>) {
+  private async streamWithToolLoop(tools: ReturnType<typeof getToolDefinitions>) {
     this.panel!.webview.postMessage({ type: 'streamStart' });
 
-    const MAX_TOOL_ROUNDS = 3; // 防止无限循环
+    const MAX_TOOL_ROUNDS = 3;
     let rounds = 0;
 
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
 
       let fullContent = '';
+      let collectedToolCalls: ToolCall[] = [];
+      let hasToolCalls = false;
 
-      // 构建消息列表（不带 tools 参数）
-      const llmMsgs = this.toLlmMessages().map(m => {
-        // 移除 tool_calls 和 tool_call_id 字段，简化消息
-        const simplified: LlmMessage = { role: m.role, content: m.content };
-        return simplified;
+      const llmMsgs = this.toLlmMessages();
+
+      const stream = this.llm.chatStream(llmMsgs, {
+        tools,
+        onToolCalls: (toolCalls) => {
+          collectedToolCalls = toolCalls;
+          hasToolCalls = true;
+        },
       });
-
-      const stream = this.llm.chatStream(llmMsgs);
 
       for await (const chunk of stream) {
         fullContent += chunk;
-        this.panel!.webview.postMessage({ type: 'streamChunk', content: chunk });
+        if (!hasToolCalls) {
+          this.panel!.webview.postMessage({ type: 'streamChunk', content: chunk });
+        }
       }
 
-      // 解析工具调用
-      const { toolCalls, cleanedContent } = this.parseToolCalls(fullContent);
-
-      // 没有工具调用 -> 正常结束
-      if (toolCalls.length === 0) {
+      if (!hasToolCalls) {
         this.messages.push({ role: 'assistant', content: fullContent, timestamp: Date.now() });
         this.saveHistory();
         this.panel!.webview.postMessage({ type: 'streamEnd', content: this.renderMarkdown(fullContent) });
         return;
       }
 
-      // === 有工具调用 ===
-
-      // 1. 存储 assistant 消息
       this.messages.push({
         role: 'assistant',
         content: fullContent,
         timestamp: Date.now(),
+        toolCalls: collectedToolCalls,
       });
 
-      // 2. 通知前端正在执行工具
-      const toolNames = toolCalls.map(tc => tc.name).join(', ');
+      const toolNames = collectedToolCalls.map(tc => tc.function.name).join(', ');
       this.panel!.webview.postMessage({
         type: 'toolStatus',
         status: 'executing',
         message: `正在执行工具: ${toolNames}`,
       });
 
-      // 3. 执行所有工具调用
-      const toolResults: string[] = [];
-      for (const tc of toolCalls) {
-        try {
-          const args: Record<string, unknown> = {};
-          if (tc.args) {
-            // 解析参数（简单格式：key=value 或直接是值）
-            if (tc.args.includes('=')) {
-              const [key, ...rest] = tc.args.split('=');
-              args[key.trim()] = rest.join('=').trim();
-            } else {
-              // 对于没有key的参数，根据工具名推断
-              if (tc.name === 'get_stock_quote' || tc.name === 'get_kline_summary' ||
-                tc.name === 'get_intraday_data' || tc.name === 'get_finance_summary' ||
-                tc.name === 'get_stock_news' || tc.name === 'get_research_reports' ||
-                tc.name === 'open_chart') {
-                args.code = tc.args.split(/\s+/)[0];
-                if (tc.name === 'open_chart' && tc.args.includes('intraday')) {
-                  args.chart_type = 'intraday';
-                } else if (tc.name === 'open_chart') {
-                  args.chart_type = 'kline';
-                }
-              } else if (tc.name === 'search_stock') {
-                args.keyword = tc.args;
-              } else if (tc.name === 'get_hot_stocks') {
-                const rankMap: Record<string, string> = {
-                  '跌幅': 'topLosers', '跌': 'topLosers',
-                  '换手': 'topTurnover', '换手率': 'topTurnover',
-                  '涨幅': 'topGainers', '涨': 'topGainers',
-                };
-                args.rank_type = rankMap[tc.args] || 'topGainers';
-              }
-            }
-          }
+      const toolResults = await executeToolCalls(collectedToolCalls);
 
-          const result = await executeTool(tc.name, args);
-          const parsed = JSON.parse(result);
-          if (parsed.success) {
-            toolResults.push(`【${tc.name}结果】\n${JSON.stringify(parsed.data, null, 2)}`);
-          } else {
-            toolResults.push(`【${tc.name}错误】${parsed.error}`);
-          }
-        } catch (e: any) {
-          toolResults.push(`【${tc.name}错误】${String(e)}`);
-        }
-      }
-
-      // 4. 通知前端工具执行完成
       this.panel!.webview.postMessage({
         type: 'toolStatus',
         status: 'done',
         message: '工具执行完成，正在生成回复...',
       });
 
-      // 5. 将工具结果作为用户消息添加，让LLM基于结果生成回复
-      const toolResultMessage = `以下是工具执行结果，请基于这些数据回答用户的问题：\n\n${toolResults.join('\n\n')}`;
-      this.messages.push({
-        role: 'user',
-        content: toolResultMessage,
-        timestamp: Date.now(),
-      });
+      for (const result of toolResults) {
+        this.messages.push({
+          role: 'tool',
+          content: result.output,
+          timestamp: Date.now(),
+          toolCallId: result.tool_call_id,
+        });
+      }
 
-      // 6. 继续循环，让 LLM 根据工具结果生成最终回复
+      this.saveHistory();
     }
 
-    // 超过最大轮次，结束流
     this.panel!.webview.postMessage({ type: 'streamEnd', content: this.renderMarkdown('') });
   }
 
@@ -1299,33 +1212,31 @@ export class AiChatPanel {
       }
     }
 
-    return `你是A股智能投资助手。
+    return `你是A股智能投资助手，可以直接调用工具获取实时数据。
 
 # 自选股
 ${stockList}
 
-# 重要规则
-- 用户提到股票时，你只能输出一行工具调用，格式如下，不要输出任何其他内容：
-\`\`\`tool
-get_stock_quote: 300444
-\`\`\`
-- 收到工具结果后，用Markdown表格展示数据，加1-2句分析
-- 绝对不要输出思考过程、规则说明、格式说明等无关内容
+# 规则
+- 用户问股票行情、财务、K线等数据时，直接调用对应工具，不要猜测数据
+- 收到工具结果后，用简洁的Markdown格式展示，附1-2句分析
+- 不要输出思考过程、不要解释工具调用逻辑
+- 不知道的信息直接说不知道，不要编造数据
 
-# 工具列表
-- get_stock_quote: 代码 → 行情
-- get_kline_summary: 代码 → K线
-- get_intraday_data: 代码 → 分时
-- get_finance_summary: 代码 → 财务
-- get_stock_news: 代码 → 新闻
-- get_research_reports: 代码 → 研报
-- search_stock: 关键词 → 搜索
-- get_market_overview → 大盘
-- get_market_distribution → 涨跌分布
-- get_hot_stocks: topGainers/topLosers/topTurnover → 热门
-- get_sector_list → 板块
-- get_7x24_news → 快讯
-- open_chart: 代码 kline/intraday → 图表`;
+# 可用工具
+- get_stock_quote: 查询个股实时行情
+- get_kline_summary: 查询K线区间摘要
+- get_intraday_data: 查询当日分时数据
+- get_finance_summary: 查询财务指标
+- get_stock_news: 查询个股新闻
+- get_research_reports: 查询券商研报
+- search_stock: 搜索股票
+- get_market_overview: 查看大盘指数
+- get_market_distribution: 查看涨跌分布
+- get_hot_stocks: 查看热门排行
+- get_sector_list: 查看行业板块
+- get_7x24_news: 查看7x24快讯
+- open_chart: 打开K线图或分时图`;
   }
 
   private async handleSaveConfig(msg: { baseUrl: string; apiKey: string; model: string }): Promise<void> {

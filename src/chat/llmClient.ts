@@ -255,6 +255,7 @@ export class LlmClient {
         // 流式 tool_calls 收集器
         // OpenAI SSE 格式中，tool_calls 通过多个 delta 片段拼接而成
         const toolCallsMap = new Map<number, { id: string; type: 'function'; function: { name: string; arguments: string } }>();
+        let toolCallsNotified = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -270,7 +271,6 @@ export class LlmClient {
             if (!trimmed || !trimmed.startsWith('data: ')) { continue; }
             const data = trimmed.slice(6);
             if (data === '[DONE]') {
-              // 流结束时，如果有收集到的 tool_calls，通知调用方
               if (toolCallsMap.size > 0 && options?.onToolCalls) {
                 options.onToolCalls(Array.from(toolCallsMap.values()));
               }
@@ -319,6 +319,10 @@ export class LlmClient {
                   if (tc.type) { existing.type = tc.type; }
                   if (tc.function?.name) { existing.function.name += tc.function.name; }
                   if (tc.function?.arguments) { existing.function.arguments += tc.function.arguments; }
+                }
+                if (options?.onToolCalls && toolCallsMap.size > 0 && !toolCallsNotified) {
+                  toolCallsNotified = true;
+                  options.onToolCalls(Array.from(toolCallsMap.values()));
                 }
               }
             } catch (parseError) {

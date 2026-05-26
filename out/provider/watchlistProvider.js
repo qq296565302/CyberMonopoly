@@ -37,6 +37,17 @@ exports.WatchlistProvider = exports.StockTreeItem = exports.CategoryTreeItem = v
 const vscode = __importStar(require("vscode"));
 const stock_1 = require("../models/stock");
 const sina_1 = require("../api/sina");
+/**
+ * 判断是否为 ETF/基金（需要显示3位小数）
+ * 上交所: 51xxxx, 50xxxx, 52xxxx, 56xxxx, 58xxxx
+ * 深交所: 15xxxx, 16xxxx
+ */
+function isEtfOrFund(code) {
+    return /^5[01268]/.test(code) || /^1[56]/.test(code);
+}
+function formatPrice(price, code) {
+    return price.toFixed(isEtfOrFund(code) ? 3 : 2);
+}
 class CategoryTreeItem extends vscode.TreeItem {
     constructor(categoryId, label, icon) {
         super(label, vscode.TreeItemCollapsibleState.Expanded);
@@ -51,7 +62,7 @@ class StockTreeItem extends vscode.TreeItem {
         super(`${stock.name} (${stock.code})`, vscode.TreeItemCollapsibleState.None);
         this.stock = stock;
         this.quote = quote;
-        this.description = quote ? `${quote.price.toFixed(2)}  ${quote.changePercent >= 0 ? '+' : ''}${quote.changePercent.toFixed(2)}%` : '--';
+        this.description = quote ? `${formatPrice(quote.price, stock.code)}  ${quote.changePercent >= 0 ? '+' : ''}${quote.changePercent.toFixed(2)}%` : '--';
         this.iconPath = this.getIcon();
         this.tooltip = this.buildTooltip();
         this.contextValue = 'stock';
@@ -75,23 +86,31 @@ class StockTreeItem extends vscode.TreeItem {
             return new vscode.MarkdownString('加载中...');
         const sign = this.quote.changePercent >= 0 ? '+' : '';
         const emoji = this.quote.changePercent > 0 ? '📈' : this.quote.changePercent < 0 ? '📉' : '➡️';
+        const code = this.stock.code;
+        const decimals = isEtfOrFund(code) ? 3 : 2;
         const tooltip = new vscode.MarkdownString('', true);
         tooltip.isTrusted = true;
-        tooltip.value = [
+        const lines = [
             `${emoji} **${this.quote.name}** (${this.quote.code})`,
             `---`,
             `| | |`,
             `|---|---|`,
-            `| 当前价 | **${this.quote.price.toFixed(2)}** |`,
+            `| 当前价 | **${this.quote.price.toFixed(decimals)}** |`,
             `| 涨跌幅 | ${sign}${this.quote.changePercent.toFixed(2)}% |`,
-            `| 涨跌额 | ${sign}${this.quote.changeAmount.toFixed(2)} |`,
-            `| 今开 | ${this.quote.open.toFixed(2)} |`,
-            `| 最高 | ${this.quote.high.toFixed(2)} |`,
-            `| 最低 | ${this.quote.low.toFixed(2)} |`,
-            `| 昨收 | ${this.quote.prevClose.toFixed(2)} |`,
+            `| 涨跌额 | ${sign}${this.quote.changeAmount.toFixed(decimals)} |`,
+            `| 今开 | ${this.quote.open.toFixed(decimals)} |`,
+            `| 最高 | ${this.quote.high.toFixed(decimals)} |`,
+            `| 最低 | ${this.quote.low.toFixed(decimals)} |`,
+            `| 昨收 | ${this.quote.prevClose.toFixed(decimals)} |`,
             `| 成交量 | ${(this.quote.volume / 10000).toFixed(0)}万手 |`,
             `| 时间 | ${this.quote.date} ${this.quote.time} |`,
-        ].join('\n');
+        ];
+        if (this.stock.alertPrice) {
+            const diff = ((this.stock.alertPrice - this.quote.price) / this.quote.price * 100);
+            const diffStr = diff.toFixed(2);
+            lines.push(`| 🎯 目标价 | ¥${this.stock.alertPrice.toFixed(decimals)} (${diff >= 0 ? '+' : ''}${diffStr}%) |`);
+        }
+        tooltip.value = lines.join('\n');
         return tooltip;
     }
 }
@@ -101,6 +120,8 @@ class WatchlistProvider {
         this.state = state;
         this._onDidChangeTreeData = new vscode.EventEmitter();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
+        this._onAlertRulesChanged = new vscode.EventEmitter();
+        this.onAlertRulesChanged = this._onAlertRulesChanged.event;
         this.stocks = [];
         this.quotes = new Map();
         this.currentSortMode = 'time-asc';
@@ -185,6 +206,15 @@ class WatchlistProvider {
         await this.state.saveWatchlist(this.stocks);
         this.quotes.delete(code);
         this._onDidChangeTreeData.fire(undefined);
+    }
+    async updateAlertPrice(code, alertPrice) {
+        const stock = this.stocks.find(s => s.code === code);
+        if (!stock)
+            return;
+        stock.alertPrice = alertPrice;
+        await this.state.saveWatchlist(this.stocks);
+        this._onDidChangeTreeData.fire(undefined);
+        this._onAlertRulesChanged.fire();
     }
     sortStocks(mode) {
         this.currentSortMode = mode;

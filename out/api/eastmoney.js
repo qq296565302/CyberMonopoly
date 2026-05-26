@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.emFetch = emFetch;
 exports.getStockNews = getStockNews;
 exports.getResearchReports = getResearchReports;
 exports.getFinanceData = getFinanceData;
@@ -61,10 +62,12 @@ async function emFetch(url, timeoutMs = 15000, retries = 2) {
             lastError = err;
             const isSocketError = err.message?.includes('socket hang up') ||
                 err.message?.includes('ECONNRESET') ||
-                err.message?.includes('ECONNREFUSED');
+                err.message?.includes('ECONNREFUSED') ||
+                err.message?.includes('Z_DATA_ERROR') ||
+                err.message?.includes('unexpected end of file');
             if (isSocketError && attempt < retries) {
-                logger_1.logger.warn(`emFetch socket error, retrying (${attempt + 1}/${retries}): ${url}`, err.message);
-                await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+                logger_1.logger.warn(`emFetch retry (${attempt + 1}/${retries}): ${url}`, err.message);
+                await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
                 continue;
             }
             if (isSocketError) {
@@ -77,30 +80,65 @@ async function emFetch(url, timeoutMs = 15000, retries = 2) {
 }
 function fetchOnce(url, timeoutMs) {
     return new Promise((resolve, reject) => {
+        let settled = false;
+        let req = null;
+        const totalTimer = setTimeout(() => {
+            if (!settled) {
+                settled = true;
+                req?.destroy();
+                reject(new Error(`请求超时 (${timeoutMs}ms)`));
+            }
+        }, timeoutMs + 5000);
+        const done = (err, data) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(totalTimer);
+            if (err)
+                reject(err);
+            else
+                resolve(data);
+        };
         const options = {
             headers: {
                 'Referer': 'https://emweb.securities.eastmoney.com',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
             timeout: timeoutMs,
         };
-        const req = https.get(url, options, (res) => {
+        req = https.get(url, options, (res) => {
+            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                fetchOnce(res.headers.location, timeoutMs).then((data) => done(null, data), (err) => done(err));
+                return;
+            }
+            if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+                let body = '';
+                res.on('data', (chunk) => { body += chunk; });
+                res.on('end', () => {
+                    done(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
+                });
+                return;
+            }
             const chunks = [];
-            res.on('data', chunk => chunks.push(chunk));
+            res.on('data', (chunk) => chunks.push(chunk));
             res.on('end', () => {
                 const data = Buffer.concat(chunks);
-                resolve(data);
+                done(null, data);
             });
             res.on('error', (err) => {
-                reject(err);
+                done(err);
             });
         });
         req.on('error', (err) => {
-            reject(err);
+            done(err);
         });
         req.on('timeout', () => {
-            req.destroy();
-            reject(new Error(`请求超时 (${timeoutMs}ms)`));
+            if (!settled) {
+                settled = true;
+                clearTimeout(totalTimer);
+                req?.destroy();
+                reject(new Error(`请求超时 (${timeoutMs}ms)`));
+            }
         });
     });
 }
@@ -294,8 +332,58 @@ async function getFullKlineData(code, preferStock) {
         const emMarket = market === 'SH' ? '1' : '0';
         secid = `${emMarket}.${code}`;
     }
-    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?cb=&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&beg=19900101&end=20500101&lmt=100000&ut=fa5fd1943c7b386f172d6893dbfba10b&secid=${secid}&_=${Date.now()}`;
-    const buffer = await emFetch(url);
+    try {
+        return await fetchKlineByRange(secid, code, '19900101', '20500101', 60000);
+    }
+    catch (firstErr) {
+        logger_1.logger.warn(`getFullKlineData full request failed, splitting into ranges`, firstErr.message);
+    }
+    const now = new Date();
+    const y = now.getFullYear();
+    const ranges = [
+        ['19900101', `${y - 10}1231`],
+        [`${y - 9}0101`, `${y - 3}1231`],
+        [`${y - 2}0101`, '20500101'],
+    ];
+    const allPoints = [];
+    let stockName = code;
+    let prevClose = 0;
+    for (const [beg, end] of ranges) {
+        try {
+            const series = await fetchKlineByRange(secid, code, beg, end, 30000);
+            if (series.data.length > 0) {
+                allPoints.push(...series.data);
+                stockName = series.name;
+                prevClose = series.prevClose ?? 0;
+            }
+        }
+        catch (rangeErr) {
+            logger_1.logger.warn(`getFullKlineData range ${beg}-${end} failed`, rangeErr.message);
+        }
+    }
+    const seen = new Set();
+    const deduped = allPoints.filter(p => {
+        const key = p.label;
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
+    deduped.sort((a, b) => a.date.getTime() - b.date.getTime());
+    if (deduped.length === 0) {
+        throw errors_1.AppError.network('无法加载完整K线数据，请稍后重试', { code, secid }, true);
+    }
+    return {
+        name: stockName,
+        data: deduped,
+        color: hashColor(code),
+        prevClose,
+        type: 'candlestick',
+    };
+}
+async function fetchKlineByRange(secid, code, beg, end, timeoutMs) {
+    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&beg=${beg}&end=${end}&lmt=100000&ut=fa5fd1943c7b386f172d6893dbfba10b&secid=${secid}&_=${Date.now()}`;
+    const buffer = await emFetch(url, timeoutMs);
     const text = buffer.toString('utf-8');
     const data = JSON.parse(text);
     const klines = data?.data?.klines || [];

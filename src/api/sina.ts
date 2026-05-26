@@ -82,35 +82,73 @@ async function fetchWithReferer(url: string, timeoutMs = 15000, retries = 2): Pr
 
 function fetchOnce(url: string, timeoutMs: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const options = {
+    let settled = false;
+    let req: import('http').ClientRequest | null = null;
+
+    const totalTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        req?.destroy();
+        reject(new Error(`请求超时 (${timeoutMs}ms)`));
+      }
+    }, timeoutMs + 5000);
+
+    const done = (err: Error | null, data?: Buffer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(totalTimer);
+      if (err) reject(err);
+      else resolve(data!);
+    };
+
+    const options: https.RequestOptions = {
       headers: {
         'Referer': 'https://finance.sina.com.cn',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
       timeout: timeoutMs,
     };
 
-    const req = https.get(url, options, (res) => {
+    req = https.get(url, options, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        fetchOnce(res.headers.location, timeoutMs).then(
+          (data) => done(null, data),
+          (err) => done(err)
+        );
+        return;
+      }
+
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          done(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
+        });
+        return;
+      }
+
       const chunks: Buffer[] = [];
-      
-      res.on('data', chunk => chunks.push(chunk));
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
       res.on('end', () => {
         const data = Buffer.concat(chunks);
-        resolve(data);
+        done(null, data);
       });
-      
-      res.on('error', (err) => {
-        reject(err);
+      res.on('error', (err: Error) => {
+        done(err);
       });
     });
     
-    req.on('error', (err) => {
-      reject(err);
+    req.on('error', (err: Error) => {
+      done(err);
     });
     
     req.on('timeout', () => {
-      req.destroy();
-      reject(new Error(`请求超时 (${timeoutMs}ms)`));
+      if (!settled) {
+        settled = true;
+        clearTimeout(totalTimer);
+        req?.destroy();
+        reject(new Error(`请求超时 (${timeoutMs}ms)`));
+      }
     });
   });
 }
