@@ -1,9 +1,9 @@
-import * as https from 'https';
-import { detectMarket, Market } from '../models/stock';
+import { detectMarket, Market, hashColor } from '../models/stock';
 import { NewsItem } from '../models/news';
 import { DataPoint, DataSeries } from '../models/chart';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { httpClient } from '../utils/httpClient';
 export { DataPoint, DataSeries } from '../models/chart';
 
 function toSinaCode(code: string): string {
@@ -38,124 +38,11 @@ export interface RealtimeQuote {
   floatMarketCap: number;  // 流通市值（元）
 }
 
-const requestCache = new Map<string, { data: Buffer; time: number }>();
-const CACHE_TTL = 3000;
-
-async function fetchWithReferer(url: string, timeoutMs = 15000, retries = 2): Promise<Buffer> {
-  const cached = requestCache.get(url);
-  if (cached && Date.now() - cached.time < CACHE_TTL) {
-    return Promise.resolve(cached.data);
-  }
-
-  let lastError: Error | null = null;
-  
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const data = await fetchOnce(url, timeoutMs);
-      requestCache.set(url, { data, time: Date.now() });
-      return data;
-    } catch (err: any) {
-      lastError = err;
-      const isSocketError = err.message?.includes('socket hang up') || 
-                           err.message?.includes('ECONNRESET') ||
-                           err.message?.includes('ECONNREFUSED');
-      
-      if (isSocketError && attempt < retries) {
-        logger.warn(`fetchWithReferer socket error, retrying (${attempt + 1}/${retries}): ${url}`, err.message);
-        await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
-        continue;
-      }
-      
-      if (isSocketError) {
-        throw AppError.network(
-          '网络连接中断，请检查网络或稍后重试',
-          { url, attempt },
-          true
-        );
-      }
-      throw err;
-    }
-  }
-  
-  throw lastError || new Error('未知错误');
-}
-
-function fetchOnce(url: string, timeoutMs: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let req: import('http').ClientRequest | null = null;
-
-    const totalTimer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        req?.destroy();
-        reject(new Error(`请求超时 (${timeoutMs}ms)`));
-      }
-    }, timeoutMs + 5000);
-
-    const done = (err: Error | null, data?: Buffer) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(totalTimer);
-      if (err) reject(err);
-      else resolve(data!);
-    };
-
-    const options: https.RequestOptions = {
-      headers: {
-        'Referer': 'https://finance.sina.com.cn',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      timeout: timeoutMs,
-    };
-
-    req = https.get(url, options, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        fetchOnce(res.headers.location, timeoutMs).then(
-          (data) => done(null, data),
-          (err) => done(err)
-        );
-        return;
-      }
-
-      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-        let body = '';
-        res.on('data', (chunk) => { body += chunk; });
-        res.on('end', () => {
-          done(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
-        });
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => {
-        const data = Buffer.concat(chunks);
-        done(null, data);
-      });
-      res.on('error', (err: Error) => {
-        done(err);
-      });
-    });
-    
-    req.on('error', (err: Error) => {
-      done(err);
-    });
-    
-    req.on('timeout', () => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(totalTimer);
-        req?.destroy();
-        reject(new Error(`请求超时 (${timeoutMs}ms)`));
-      }
-    });
-  });
-}
-
 export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
   const url = `https://hq.sinajs.cn/list=${toSinaCode(code)}`;
-  const buffer = await fetchWithReferer(url);
+  const buffer = await httpClient.fetchBuffer(url, {
+    headers: { 'Referer': 'https://finance.sina.com.cn' },
+  });
   const text = new TextDecoder('gbk').decode(buffer);
 
   const match = text.match(/"([^"]+)"/);
@@ -173,7 +60,7 @@ export async function getRealtimeQuote(code: string): Promise<RealtimeQuote> {
   try {
     const tencentCode = toSinaCode(code);
     const extraUrl = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${tencentCode}`;
-    const extraBuffer = await fetchWithReferer(extraUrl);
+    const extraBuffer = await httpClient.fetchBuffer(extraUrl);
     const extraData = JSON.parse(extraBuffer.toString('utf-8'));
     const qtData = extraData?.data?.[tencentCode]?.qt?.[tencentCode];
     if (qtData && Array.isArray(qtData)) {
@@ -215,7 +102,9 @@ export async function getBatchQuotes(codes: string[]): Promise<RealtimeQuote[]> 
 
   const sinaCodes = codes.map(toSinaCode).join(',');
   const url = `https://hq.sinajs.cn/list=${sinaCodes}`;
-  const buffer = await fetchWithReferer(url);
+  const buffer = await httpClient.fetchBuffer(url, {
+    headers: { 'Referer': 'https://finance.sina.com.cn' },
+  });
   const text = new TextDecoder('gbk').decode(buffer);
 
   const lines = text.split('\n').filter(l => l.trim().length > 0);
@@ -259,7 +148,7 @@ export async function getBatchQuotes(codes: string[]): Promise<RealtimeQuote[]> 
       floatMarketCap: 0,
     });
   }
-  
+
   return results;
 }
 
@@ -282,7 +171,7 @@ interface TencentMinuteData {
 export async function getIntradayData(code: string): Promise<DataSeries> {
   const tencentCode = toSinaCode(code);
   const url = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${tencentCode}`;
-  const buffer = await fetchWithReferer(url);
+  const buffer = await httpClient.fetchBuffer(url);
   const text = buffer.toString('utf-8');
 
   const data = JSON.parse(text);
@@ -360,11 +249,13 @@ export async function getIntradayData(code: string): Promise<DataSeries> {
 
 export async function getKlineData(code: string, days: number, scale: number = 240): Promise<DataSeries> {
   const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${toSinaCode(code)}&scale=${scale}&ma=no&datalen=${Math.min(days, 1023)}`;
-  const buffer = await fetchWithReferer(url);
+  const buffer = await httpClient.fetchBuffer(url, {
+    headers: { 'Referer': 'https://finance.sina.com.cn' },
+  });
   const text = buffer.toString('utf-8');
-  
+
   const raw: KlineRaw[] | null = JSON.parse(text);
-  
+
   if (!raw || !Array.isArray(raw) || raw.length === 0) {
     const realtime = await getRealtimeQuote(code).catch(() => null);
     return {
@@ -375,7 +266,7 @@ export async function getKlineData(code: string, days: number, scale: number = 2
       type: 'candlestick',
     };
   }
-  
+
   const points: DataPoint[] = raw.map(item => ({
     date: new Date(item.day),
     value: parseFloat(item.close || '0'),
@@ -386,9 +277,9 @@ export async function getKlineData(code: string, days: number, scale: number = 2
     volume: parseFloat(item.volume || '0'),
     label: `${code} ${item.day}`,
   }));
-  
+
   const realtime = await getRealtimeQuote(code).catch(() => null);
-  
+
   return {
     name: `${realtime?.name || code} ${code}`,
     data: points,
@@ -398,15 +289,6 @@ export async function getKlineData(code: string, days: number, scale: number = 2
   };
 }
 
-function hashColor(str: string): [number, number, number] {
-  const colors: [number, number, number][] = [
-    [86, 180, 233], [230, 159, 0], [0, 158, 115],
-    [204, 121, 167], [213, 94, 0], [240, 228, 66],
-  ];
-  let sum = 0;
-  for (let i = 0; i < str.length; i++) sum += str.charCodeAt(i);
-  return colors[sum % colors.length];
-}
 
 function cleanHtml(html: string): string {
   return html
@@ -421,15 +303,17 @@ function cleanHtml(html: string): string {
 
 export async function get7x24News(page = 1, pageSize = 30): Promise<NewsItem[]> {
   const url = `https://zhibo.sina.com.cn/api/zhibo/feed?page=${page}&page_size=${pageSize}&zhibo_id=152&tag_id=0&dire=b&dpc=1&_=${Date.now()}`;
-  const buffer = await fetchWithReferer(url);
+  const buffer = await httpClient.fetchBuffer(url, {
+    headers: { 'Referer': 'https://finance.sina.com.cn' },
+  });
   const text = buffer.toString('utf-8');
-  
+
   const jsonMatch = text.match(/\{.*\}/s);
   if (!jsonMatch) throw new Error('解析快讯失败');
-  
+
   const data = JSON.parse(jsonMatch[0]);
   const list = data.result?.data?.feed?.list || [];
-  
+
   return list.map((item: any) => {
     const content = cleanHtml(item.rich_text || '');
     const tag = Array.isArray(item.tag) && item.tag.length > 0 ? item.tag[0].name : undefined;

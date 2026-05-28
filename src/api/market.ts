@@ -1,199 +1,8 @@
-import * as https from 'https';
 import { logger } from '../utils/logger';
+import { httpClient, isATradingTime, isHKTradingTime } from '../utils/httpClient';
 
-const marketCache = new Map<string, { data: string; time: number }>();
-const marketBufCache = new Map<string, { data: Buffer; time: number }>();
-
-const TRADING_CACHE_TTL = 15000;
-const NON_TRADING_CACHE_TTL = 300000;
-
-export function isATradingTime(): boolean {
-  const now = new Date();
-  const day = now.getDay();
-  if (day === 0 || day === 6) {
-    return false;
-  }
-
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-  const timeMinutes = hours * 60 + minutes;
-
-  if (timeMinutes >= 9 * 60 + 15 && timeMinutes <= 11 * 60 + 30) {
-    return true;
-  }
-  if (timeMinutes >= 13 * 60 && timeMinutes <= 15 * 60) {
-    return true;
-  }
-
-  return false;
-}
-
-export function isHKTradingTime(): boolean {
-  const now = new Date();
-  const day = now.getDay();
-  if (day === 0 || day === 6) {
-    return false;
-  }
-
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-  const timeMinutes = hours * 60 + minutes;
-
-  if (timeMinutes >= 9 * 60 + 30 && timeMinutes <= 12 * 60) {
-    return true;
-  }
-  if (timeMinutes >= 13 * 60 && timeMinutes <= 16 * 60) {
-    return true;
-  }
-
-  return false;
-}
-
-function getCacheTTL(): number {
-  return (isATradingTime() || isHKTradingTime()) ? TRADING_CACHE_TTL : NON_TRADING_CACHE_TTL;
-}
-
-async function marketFetch(url: string, timeoutMs = 15000, retries = 2): Promise<string> {
-  const cached = marketCache.get(url);
-  const ttl = getCacheTTL();
-  if (cached && Date.now() - cached.time < ttl) {
-    return cached.data;
-  }
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const text = await new Promise<string>((resolve, reject) => {
-        let settled = false;
-        const req = https.get(url, {
-          headers: {
-            'Referer': 'https://finance.sina.com.cn/',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          },
-          timeout: timeoutMs,
-        }, (res) => {
-          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            const redirectUrl = res.headers.location;
-            res.resume();
-            marketFetch(redirectUrl, timeoutMs, 0).then(resolve, reject);
-            return;
-          }
-          if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-            res.resume();
-            reject(new Error(`HTTP ${res.statusCode}`));
-            return;
-          }
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk: Buffer) => chunks.push(chunk));
-          res.on('end', () => {
-            settled = true;
-            resolve(Buffer.concat(chunks).toString('utf-8'));
-          });
-          res.on('error', (err: Error) => {
-            if (!settled) { settled = true; reject(err); }
-          });
-        });
-
-        req.on('error', (err: any) => {
-          if (!settled) {
-            settled = true;
-            reject(err);
-          }
-        });
-
-        req.on('timeout', () => {
-          if (!settled) {
-            settled = true;
-            req.destroy();
-            reject(new Error('请求超时'));
-          }
-        });
-      });
-
-      marketCache.set(url, { data: text, time: Date.now() });
-      return text;
-    } catch (e: any) {
-      const msg = e?.message || '';
-      const isSocketError = msg.includes('socket hang up') ||
-        msg.includes('ECONNRESET') ||
-        msg.includes('ECONNREFUSED') ||
-        msg.includes('ETIMEDOUT') ||
-        msg.includes('请求超时');
-      if (isSocketError && attempt < retries) {
-        logger.debug(`[marketFetch] retry ${attempt + 1}/${retries}: ${url} - ${msg}`);
-        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error('marketFetch: exhausted retries');
-}
-
-async function marketFetchBuf(url: string, timeoutMs = 15000, retries = 2): Promise<Buffer> {
-  const cached = marketBufCache.get(url);
-  const ttl = getCacheTTL();
-  if (cached && Date.now() - cached.time < ttl) {
-    return cached.data;
-  }
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const buf = await new Promise<Buffer>((resolve, reject) => {
-        let settled = false;
-        const req = https.get(url, {
-          headers: {
-            'Referer': 'https://finance.sina.com.cn/',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          },
-          timeout: timeoutMs,
-        }, (res) => {
-          if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-            res.resume();
-            reject(new Error(`HTTP ${res.statusCode}`));
-            return;
-          }
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk: Buffer) => chunks.push(chunk));
-          res.on('end', () => {
-            settled = true;
-            resolve(Buffer.concat(chunks));
-          });
-          res.on('error', (err: Error) => {
-            if (!settled) { settled = true; reject(err); }
-          });
-        });
-
-        req.on('error', (err: any) => {
-          if (!settled) { settled = true; reject(err); }
-        });
-
-        req.on('timeout', () => {
-          if (!settled) {
-            settled = true;
-            req.destroy();
-            reject(new Error('请求超时'));
-          }
-        });
-      });
-
-      marketBufCache.set(url, { data: buf, time: Date.now() });
-      return buf;
-    } catch (e: any) {
-      const msg = e?.message || '';
-      const isSocketError = msg.includes('socket hang up') ||
-        msg.includes('ECONNRESET') ||
-        msg.includes('ECONNREFUSED') ||
-        msg.includes('ETIMEDOUT') ||
-        msg.includes('请求超时');
-      if (isSocketError && attempt < retries) {
-        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error('marketFetchBuf: exhausted retries');
-}
+// 重新导出交易时间函数，保持向后兼容
+export { isATradingTime, isHKTradingTime };
 
 export interface IndexQuote {
   code: string;
@@ -226,8 +35,9 @@ export async function getIndexQuotes(): Promise<IndexQuote[]> {
   try {
     const sinaCodes = A_INDEX_CODES.map(idx => `${idx.sinaPrefix}${idx.code}`).join(',');
     const url = `https://hq.sinajs.cn/list=${sinaCodes}`;
-    const buf = await marketFetchBuf(url);
-    const text = new TextDecoder('gbk').decode(buf);
+    const text = await httpClient.fetchGbk(url, {
+      headers: { 'Referer': 'https://finance.sina.com.cn/' },
+    });
 
     const lines = text.split('\n').filter(l => l.trim());
     for (const line of lines) {
@@ -264,7 +74,9 @@ export async function getIndexQuotes(): Promise<IndexQuote[]> {
   try {
     const tencentKeys = HK_INDEX_CODES.map(idx => idx.tencentKey).join(',');
     const url = `https://qt.gtimg.cn/q=${tencentKeys}`;
-    const text = await marketFetch(url);
+    const text = await httpClient.fetchText(url, {
+      headers: { 'Referer': 'https://finance.sina.com.cn/' },
+    });
 
     const lines = text.split('\n').filter(l => l.trim());
     for (const line of lines) {
@@ -346,12 +158,37 @@ interface SinaStockItem {
 
 async function fetchSinaStockPage(node: string, page: number, num: number, sort: string, asc: number): Promise<SinaStockItem[]> {
   const url = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=${page}&num=${num}&sort=${sort}&asc=${asc}&node=${node}&_s_r_a=auto`;
-  const text = await marketFetch(url);
+  const text = await httpClient.fetchText(url, {
+    headers: { 'Referer': 'https://finance.sina.com.cn/' },
+  });
   try {
     return JSON.parse(text);
   } catch {
     return [];
   }
+}
+
+/**
+ * 并发限制执行器
+ */
+async function parallelLimit<T>(tasks: (() => Promise<T>)[], limit: number): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function runNext(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const index = nextIndex++;
+      try {
+        results[index] = { status: 'fulfilled', value: await tasks[index]() };
+      } catch (err) {
+        results[index] = { status: 'rejected', reason: err };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => runNext());
+  await Promise.all(workers);
+  return results;
 }
 
 export async function getMarketDistribution(): Promise<MarketDistribution> {
@@ -389,19 +226,18 @@ export async function getMarketDistribution(): Promise<MarketDistribution> {
     }
 
     const totalPages = Math.ceil(5500 / PAGE_SIZE);
-    const pagePromises: Promise<void>[] = [];
+    const pageTasks: (() => Promise<SinaStockItem[]>)[] = [];
     for (let pn = 2; pn <= totalPages; pn++) {
-      pagePromises.push(
-        fetchSinaStockPage('hs_a', pn, PAGE_SIZE, 'changepercent', 0)
-          .then(pageData => {
-            for (const item of pageData) {
-              processItem(item);
-            }
-          })
-          .catch(() => { })
-      );
+      pageTasks.push(() => fetchSinaStockPage('hs_a', pn, PAGE_SIZE, 'changepercent', 0));
     }
-    await Promise.allSettled(pagePromises);
+    const pageResults = await parallelLimit(pageTasks, 5);
+    for (const result of pageResults) {
+      if (result.status === 'fulfilled') {
+        for (const item of result.value) {
+          processItem(item);
+        }
+      }
+    }
 
     logger.debug(`[涨跌分布] 新浪接口统计: up=${upCount} down=${downCount} flat=${flatCount} limitUp=${limitUpCount} limitDown=${limitDownCount} turnover=${turnover}`);
   } catch (e) {
@@ -455,8 +291,7 @@ async function getTurnoverDiff(currentTurnover: number): Promise<number> {
 
     for (const code of indexCodes) {
       const minuteUrl = `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${code}`;
-      const buf = await marketFetchBuf(minuteUrl);
-      const text = buf.toString('utf-8');
+      const text = await httpClient.fetchText(minuteUrl);
       const data = JSON.parse(text);
 
       const stockData = data.data?.[code];
@@ -470,7 +305,7 @@ async function getTurnoverDiff(currentTurnover: number): Promise<number> {
       }
 
       const klineUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?code=${code}&_var=kline_day&param=${code},day,,,3,qfq`;
-      const klineText = await marketFetch(klineUrl);
+      const klineText = await httpClient.fetchText(klineUrl);
       const jsonMatch = klineText.match(/\{.*\}/s);
       if (jsonMatch) {
         const klineData = JSON.parse(jsonMatch[0]);
@@ -503,18 +338,11 @@ export interface SectorQuote {
   price: number;
 }
 
-function decodeGbkBuffer(buf: Buffer): string {
-  try {
-    return new TextDecoder('gbk').decode(buf);
-  } catch {
-    return buf.toString('utf-8');
-  }
-}
-
 async function fetchSinaSectors(param: string): Promise<SectorQuote[]> {
   const url = `https://money.finance.sina.com.cn/q/view/newFLJK.php?param=${param}`;
-  const buf = await marketFetchBuf(url);
-  const text = decodeGbkBuffer(buf);
+  const text = await httpClient.fetchGbk(url, {
+    headers: { 'Referer': 'https://finance.sina.com.cn/' },
+  });
 
   const varMatch = text.match(/=\s*(\{.*\})/s);
   if (!varMatch) return [];

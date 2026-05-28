@@ -1,177 +1,270 @@
-import * as vscode from 'vscode';
-import { AppError, ErrorCode, withRetry, RetryOptions, DEFAULT_RETRY_OPTIONS } from './errors';
+import * as https from 'https';
+import * as http from 'http';
 import { logger } from './logger';
 
-export interface HttpRequestOptions {
-    timeout?: number;
-    headers?: Record<string, string>;
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-    body?: string;
-    retryOptions?: Partial<RetryOptions>;
+// ============================================================
+// 交易时间判断（控制缓存 TTL）
+// ============================================================
+
+export function isATradingTime(): boolean {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+
+  const timeMinutes = now.getHours() * 60 + now.getMinutes();
+  return (timeMinutes >= 9 * 60 + 15 && timeMinutes <= 11 * 60 + 30) ||
+    (timeMinutes >= 13 * 60 && timeMinutes <= 15 * 60);
 }
 
-/**
- * 封装 HTTP 请求，统一处理超时、错误和重试
- */
+export function isHKTradingTime(): boolean {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+
+  const timeMinutes = now.getHours() * 60 + now.getMinutes();
+  return (timeMinutes >= 9 * 60 + 30 && timeMinutes <= 12 * 60) ||
+    (timeMinutes >= 13 * 60 && timeMinutes <= 16 * 60);
+}
+
+// ============================================================
+// LRU 缓存
+// ============================================================
+
+interface CacheEntry {
+  data: Buffer;
+  time: number;
+}
+
+class LruCache {
+  private map = new Map<string, CacheEntry>();
+  private maxSize: number;
+
+  constructor(maxSize: number = 200) {
+    this.maxSize = maxSize;
+  }
+
+  get(key: string, ttl: number): CacheEntry | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (Date.now() - entry.time >= ttl) {
+      this.map.delete(key);
+      return undefined;
+    }
+    // 刷新 LRU 顺序
+    this.map.delete(key);
+    this.map.set(key, entry);
+    return entry;
+  }
+
+  set(key: string, data: Buffer): void {
+    if (this.map.has(key)) {
+      this.map.delete(key);
+    }
+    this.map.set(key, { data, time: Date.now() });
+    // 淘汰最旧的条目
+    while (this.map.size > this.maxSize) {
+      const oldest = this.map.keys().next().value!;
+      this.map.delete(oldest);
+    }
+  }
+
+  clear(): void {
+    this.map.clear();
+  }
+}
+
+// ============================================================
+// HTTP 客户端配置
+// ============================================================
+
+export interface HttpFetchOptions {
+  /** 请求超时（毫秒），默认 15000 */
+  timeoutMs?: number;
+  /** 最大重试次数，默认 2 */
+  retries?: number;
+  /** 自定义请求头 */
+  headers?: Record<string, string>;
+  /** 强制使用 HTTP（默认 HTTPS） */
+  useHttp?: boolean;
+}
+
+// ============================================================
+// 统一 HTTP 客户端
+// ============================================================
+
 export class HttpClient {
-    private static instance: HttpClient;
-    private defaultTimeout = 10000; // 10 秒默认超时
+  private cache = new LruCache(200);
+  private tradingCacheTtl = 15_000;     // 交易时段 15 秒
+  private nonTradingCacheTtl = 300_000; // 非交易时段 5 分钟
 
-    private constructor() {}
+  private getCacheTtl(): number {
+    return (isATradingTime() || isHKTradingTime()) ? this.tradingCacheTtl : this.nonTradingCacheTtl;
+  }
 
-    public static getInstance(): HttpClient {
-        if (!HttpClient.instance) {
-            HttpClient.instance = new HttpClient();
+  /**
+   * GET 请求，返回 Buffer
+   */
+  async fetchBuffer(url: string, options: HttpFetchOptions = {}): Promise<Buffer> {
+    const ttl = this.getCacheTtl();
+    const cached = this.cache.get(url, ttl);
+    if (cached) return cached.data;
+
+    const data = await this.doFetch(url, options);
+    this.cache.set(url, data);
+    return data;
+  }
+
+  /**
+   * GET 请求，返回 UTF-8 字符串
+   */
+  async fetchText(url: string, options: HttpFetchOptions = {}): Promise<string> {
+    const buf = await this.fetchBuffer(url, options);
+    return buf.toString('utf-8');
+  }
+
+  /**
+   * GET 请求，返回 GBK 解码的字符串
+   */
+  async fetchGbk(url: string, options: HttpFetchOptions = {}): Promise<string> {
+    const buf = await this.fetchBuffer(url, options);
+    try {
+      return new TextDecoder('gbk').decode(buf);
+    } catch {
+      return buf.toString('utf-8');
+    }
+  }
+
+  /**
+   * 清空缓存
+   */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  /**
+   * 带重试的实际请求逻辑
+   */
+  private async doFetch(url: string, options: HttpFetchOptions): Promise<Buffer> {
+    const timeoutMs = options.timeoutMs ?? 15_000;
+    const retries = options.retries ?? 2;
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await this.fetchOnce(url, timeoutMs, options);
+      } catch (err: any) {
+        lastError = err;
+        const isRetryable = this.isRetryableError(err);
+
+        if (isRetryable && attempt < retries) {
+          logger.debug(`[HttpClient] retry ${attempt + 1}/${retries}: ${url} - ${err.message}`);
+          await this.sleep(300 * (attempt + 1));
+          continue;
         }
-        return HttpClient.instance;
+
+        throw err;
+      }
     }
 
-    /**
-     * GET 请求
-     */
-    async get<T>(url: string, options?: HttpRequestOptions): Promise<T> {
-        return this.request<T>(url, { ...options, method: 'GET' });
-    }
+    throw lastError ?? new Error('HttpClient: unknown error');
+  }
 
-    /**
-     * POST 请求
-     */
-    async post<T>(url: string, body?: any, options?: HttpRequestOptions): Promise<T> {
-        const headers = {
-            'Content-Type': 'application/json',
-            ...options?.headers
-        };
-        const bodyStr = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined;
-        return this.request<T>(url, { ...options, method: 'POST', headers, body: bodyStr });
-    }
+  /**
+   * 单次 HTTP GET 请求
+   */
+  private fetchOnce(url: string, timeoutMs: number, options: HttpFetchOptions): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let req: http.ClientRequest | null = null;
 
-    /**
-     * 通用请求方法
-     */
-    async request<T>(url: string, options: HttpRequestOptions = {}): Promise<T> {
-        const {
-            timeout = this.defaultTimeout,
-            headers = {},
-            method = 'GET',
-            body,
-            retryOptions
-        } = options;
-
-        try {
-            return await withRetry(
-                async () => {
-                    // 每次重试创建新的 AbortController，避免信号已失效
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-                    try {
-                        const response = await fetch(url, {
-                            method,
-                            headers,
-                            body: method !== 'GET' ? body : undefined,
-                            signal: controller.signal
-                        });
-
-                        if (!response.ok) {
-                            const errorBody = await response.text().catch(() => '');
-                            throw AppError.http(response.status, url, errorBody);
-                        }
-
-                        const contentType = response.headers.get('content-type');
-                        if (contentType && contentType.includes('application/json')) {
-                            const data = await response.json();
-                            // 检查数据有效性
-                            if (data === null || data === undefined) {
-                                throw AppError.parse(url, '返回数据为空');
-                            }
-                            return data as T;
-                        } else {
-                            const text = await response.text();
-                            // 尝试解析为 JSON，失败则返回原始文本
-                            try {
-                                return JSON.parse(text) as T;
-                            } catch {
-                                return text as unknown as T;
-                            }
-                        }
-                    } finally {
-                        clearTimeout(timeoutId);
-                    }
-                },
-                retryOptions,
-                (error, attempt) => {
-                    logger.warn(`请求重试 #${attempt}: ${url} - ${error.message}`, error);
-                }
-            );
-        } catch (error) {
-            if (error instanceof AppError) {
-                throw error;
-            }
-
-            // 处理 AbortError (超时)
-            if (error instanceof Error && error.name === 'AbortError') {
-                throw AppError.timeout(url, timeout);
-            }
-
-            // 处理网络错误
-            if (error instanceof TypeError && error.message.includes('fetch')) {
-                throw new AppError(
-                    ErrorCode.NETWORK_ERROR,
-                    `网络请求失败：${url}`,
-                    { cause: error as Error, retryable: true }
-                );
-            }
-
-            // 未知错误
-            throw new AppError(
-                ErrorCode.UNKNOWN,
-                `未知错误：${error instanceof Error ? error.message : String(error)}`,
-                { cause: error as Error }
-            );
+      // 总超时 = 请求超时 + 5 秒余量
+      const totalTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          req?.destroy();
+          reject(new Error(`请求超时 (${timeoutMs}ms)`));
         }
-    }
+      }, timeoutMs + 5000);
 
-    /**
-     * 批量请求（带并发控制）
-     */
-    async batchRequest<T>(
-        urls: string[],
-        options?: HttpRequestOptions,
-        concurrencyLimit: number = 5
-    ): Promise<(T | Error)[]> {
-        const results: (T | Error)[] = new Array(urls.length);
-        const queue = [...urls.map((url, index) => ({ url, index }))];
-        const inProgress = new Set<number>();
+      const done = (err: Error | null, data?: Buffer) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(totalTimer);
+        if (err) reject(err);
+        else resolve(data!);
+      };
 
-        return new Promise((resolve) => {
-            const processNext = async () => {
-                if (queue.length === 0 && inProgress.size === 0) {
-                    resolve(results);
-                    return;
-                }
+      const defaultHeaders: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      };
 
-                while (inProgress.size < concurrencyLimit && queue.length > 0) {
-                    const { url, index } = queue.shift()!;
-                    inProgress.add(index);
+      const reqOptions: https.RequestOptions = {
+        headers: { ...defaultHeaders, ...options.headers },
+        timeout: timeoutMs,
+      };
 
-                    this.request<T>(url, options)
-                        .then(data => {
-                            results[index] = data;
-                        })
-                        .catch(error => {
-                            results[index] = error;
-                            logger.error(`批量请求失败：${url}`, error);
-                        })
-                        .finally(() => {
-                            inProgress.delete(index);
-                            processNext();
-                        });
-                }
-            };
+      const lib = options.useHttp ? http : https;
 
-            processNext();
-        });
-    }
+      req = lib.get(url, reqOptions, (res) => {
+        // 处理重定向：drain 响应流，释放连接
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          const redirectUrl = res.headers.location;
+          this.fetchOnce(redirectUrl, timeoutMs, options).then(
+            (data) => done(null, data),
+            (err) => done(err)
+          );
+          return;
+        }
+
+        // 处理非 2xx 响应：读取错误信息后关闭
+        if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const body = Buffer.concat(chunks).toString('utf-8').substring(0, 200);
+            done(new Error(`HTTP ${res.statusCode}: ${body}`));
+          });
+          res.on('error', (err: Error) => done(err));
+          return;
+        }
+
+        // 正常响应
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => done(null, Buffer.concat(chunks)));
+        res.on('error', (err: Error) => done(err));
+      });
+
+      req.on('error', (err: Error) => done(err));
+
+      req.on('timeout', () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(totalTimer);
+          req?.destroy();
+          reject(new Error(`请求超时 (${timeoutMs}ms)`));
+        }
+      });
+    });
+  }
+
+  private isRetryableError(err: any): boolean {
+    const msg = err?.message || '';
+    return msg.includes('socket hang up') ||
+      msg.includes('ECONNRESET') ||
+      msg.includes('ECONNREFUSED') ||
+      msg.includes('ETIMEDOUT') ||
+      msg.includes('Z_DATA_ERROR') ||
+      msg.includes('unexpected end of file') ||
+      msg.includes('请求超时');
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(r => setTimeout(r, ms));
+  }
 }
 
-export const httpClient = HttpClient.getInstance();
+/** 默认共享实例 */
+export const httpClient = new HttpClient();

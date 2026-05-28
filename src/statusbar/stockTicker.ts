@@ -1,12 +1,6 @@
 import * as vscode from 'vscode';
 import { WatchlistProvider } from '../provider/watchlistProvider';
-
-/**
- * 判断是否为 ETF/基金（需要显示3位小数）
- */
-function isEtfOrFund(code: string): boolean {
-  return /^5[01268]/.test(code) || /^1[56]/.test(code);
-}
+import { isEtfOrFund } from '../models/stock';
 
 export class StockTicker {
   private statusBar: vscode.StatusBarItem;

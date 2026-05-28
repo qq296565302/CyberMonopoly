@@ -1,18 +1,9 @@
 import * as vscode from 'vscode';
-import { WatchStock, detectMarket } from '../models/stock';
+import { WatchStock, detectMarket, isEtfOrFund } from '../models/stock';
 import { RealtimeQuote, getRealtimeQuote, getBatchQuotes } from '../api/sina';
 import { StateManager } from '../storage/stateManager';
 
 type TreeItem = StockTreeItem | CategoryTreeItem;
-
-/**
- * 判断是否为 ETF/基金（需要显示3位小数）
- * 上交所: 51xxxx, 50xxxx, 52xxxx, 56xxxx, 58xxxx
- * 深交所: 15xxxx, 16xxxx
- */
-function isEtfOrFund(code: string): boolean {
-  return /^5[01268]/.test(code) || /^1[56]/.test(code);
-}
 
 function formatPrice(price: number, code: string): string {
   return price.toFixed(isEtfOrFund(code) ? 3 : 2);

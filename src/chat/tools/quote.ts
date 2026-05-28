@@ -2,8 +2,7 @@
  * 行情查询工具 - 获取个股实时行情
  */
 
-import { ITool, ToolContext, ToolError } from './base';
-import { ToolDefinition, ToolResult } from '../toolExecutor';
+import { ITool, ToolContext, ToolError, ToolDefinition, ToolResult } from './base';
 import { getRealtimeQuote } from '../../api/sina';
 import { AppError } from '../../utils/errors';
 import { logger } from '../../utils/logger';

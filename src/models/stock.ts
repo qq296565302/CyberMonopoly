@@ -25,3 +25,25 @@ export interface WatchStock {
   alertPrice?: number;
   alertPercent?: number;
 }
+
+/**
+ * 判断是否为 ETF/基金（需要显示3位小数）
+ * 上交所: 51xxxx, 50xxxx, 52xxxx, 56xxxx, 58xxxx
+ * 深交所: 15xxxx, 16xxxx
+ */
+export function isEtfOrFund(code: string): boolean {
+  return /^5[01268]/.test(code) || /^1[56]/.test(code);
+}
+
+/**
+ * 根据字符串生成确定性颜色（用于K线图等）
+ */
+export function hashColor(str: string): [number, number, number] {
+  const colors: [number, number, number][] = [
+    [86, 180, 233], [230, 159, 0], [0, 158, 115],
+    [204, 121, 167], [213, 94, 0], [240, 228, 66],
+  ];
+  let sum = 0;
+  for (let i = 0; i < str.length; i++) sum += str.charCodeAt(i);
+  return colors[sum % colors.length];
+}

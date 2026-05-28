@@ -68,10 +68,6 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private escapeHtml(s: string): string {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
   private updateView(newItems?: NewsItem[]): void {
     if (!this._view) return;
 
@@ -83,13 +79,13 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
 
     if (newItems && newItems.length > 0) {
       const fontSize = vscode.workspace.getConfiguration('cyberMonopoly').get<number>('chartFontSize', 14);
-      const itemsHtml = newItems.map(n => {
-        const time = this.escapeHtml(n.createTime || '');
-        const content = this.escapeHtml(n.content || '');
-        const tag = n.tag ? `<span class="tag">${this.escapeHtml(n.tag)}</span>` : '';
-        return `<div class="news-item">${tag}<span class="time">${time}</span><div class="content">${content}</div></div>`;
-      }).join('');
-      this._view.webview.postMessage({ type: 'prepend', html: itemsHtml, fontSize });
+      // 传递数据对象而非 HTML 字符串，由 webview 端安全构建 DOM
+      const itemsData = newItems.map(n => ({
+        time: n.createTime || '',
+        content: n.content || '',
+        tag: n.tag || '',
+      }));
+      this._view.webview.postMessage({ type: 'prepend', items: itemsData, fontSize });
     }
   }
 
@@ -98,12 +94,13 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
     const fontSize = vscode.workspace.getConfiguration('cyberMonopoly').get<number>('chartFontSize', 14);
     const bossInitEnabled = this.bossEnabled;
     const bossInitSaturation = this.bossSaturation;
-    const newsHtml = this.items.map(n => {
-      const time = this.escapeHtml(n.createTime || '');
-      const content = this.escapeHtml(n.content || '');
-      const tag = n.tag ? `<span class="tag">${this.escapeHtml(n.tag)}</span>` : '';
-      return `<div class="news-item">${tag}<span class="time">${time}</span><div class="content">${content}</div></div>`;
-    }).join('');
+    // 传递数据对象，由 webview 端安全构建 DOM
+    const initialData = this.items.map(n => ({
+      time: n.createTime || '',
+      content: n.content || '',
+      tag: n.tag || '',
+    }));
+    const initialDataJson = JSON.stringify(initialData);
 
     return /*html*/ `
 <!DOCTYPE html>
@@ -122,11 +119,47 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
   </style>
 </head>
 <body>
-  <div id="news-list">${newsHtml || '<div class="empty">暂无快讯</div>'}</div>
+  <div id="news-list"></div>
   <script nonce="${nonce}">
     const list = document.getElementById('news-list');
     let currentBossEnabled = ${bossInitEnabled};
     let currentBossSaturation = ${bossInitSaturation};
+
+    // 安全构建新闻节点的辅助函数
+    function buildNewsNode(item) {
+      const div = document.createElement('div');
+      div.className = 'news-item';
+      if (item.tag) {
+        const tagSpan = document.createElement('span');
+        tagSpan.className = 'tag';
+        tagSpan.textContent = item.tag;
+        div.appendChild(tagSpan);
+      }
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'time';
+      timeSpan.textContent = item.time;
+      div.appendChild(timeSpan);
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'content';
+      contentDiv.textContent = item.content;
+      div.appendChild(contentDiv);
+      return div;
+    }
+
+    // 用初始数据安全构建 DOM
+    (function() {
+      const initialData = ${initialDataJson};
+      if (initialData.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = '暂无快讯';
+        list.appendChild(empty);
+      } else {
+        for (const item of initialData) {
+          list.appendChild(buildNewsNode(item));
+        }
+      }
+    })();
     if (currentBossEnabled) {
       document.body.style.filter = 'saturate(' + (currentBossSaturation / 100) + ')';
     }
@@ -135,10 +168,9 @@ export class NewsViewProvider implements vscode.WebviewViewProvider {
       if (msg.type === 'prepend') {
         const empty = list.querySelector('.empty');
         if (empty) empty.remove();
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = msg.html;
-        while (wrapper.firstChild) {
-          list.insertBefore(wrapper.firstChild, list.firstChild);
+        const items = msg.items || [];
+        for (let i = items.length - 1; i >= 0; i--) {
+          list.insertBefore(buildNewsNode(items[i]), list.firstChild);
         }
         while (list.children.length > 200) {
           list.removeChild(list.lastChild);

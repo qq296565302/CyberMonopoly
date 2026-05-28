@@ -1,125 +1,8 @@
-import * as https from 'https';
-import { detectMarket } from '../models/stock';
+import { detectMarket, hashColor } from '../models/stock';
 import { DataSeries, DataPoint } from './sina';
 import { AppError, ErrorCode } from '../utils/errors';
 import { logger } from '../utils/logger';
-
-const emCache = new Map<string, { data: Buffer; time: number }>();
-const CACHE_TTL = 10000;
-
-export async function emFetch(url: string, timeoutMs = 15000, retries = 2): Promise<Buffer> {
-  const cached = emCache.get(url);
-  if (cached && Date.now() - cached.time < CACHE_TTL) {
-    return Promise.resolve(cached.data);
-  }
-
-  let lastError: Error | null = null;
-  
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const data = await fetchOnce(url, timeoutMs);
-      emCache.set(url, { data, time: Date.now() });
-      return data;
-    } catch (err: any) {
-      lastError = err;
-      const isSocketError = err.message?.includes('socket hang up') || 
-                           err.message?.includes('ECONNRESET') ||
-                           err.message?.includes('ECONNREFUSED') ||
-                           err.message?.includes('Z_DATA_ERROR') ||
-                           err.message?.includes('unexpected end of file');
-      
-      if (isSocketError && attempt < retries) {
-        logger.warn(`emFetch retry (${attempt + 1}/${retries}): ${url}`, err.message);
-        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
-        continue;
-      }
-      
-      if (isSocketError) {
-        throw AppError.network(
-          '网络连接中断，请检查网络或稍后重试',
-          { url, attempt },
-          true
-        );
-      }
-      throw err;
-    }
-  }
-  
-  throw lastError || new Error('未知错误');
-}
-
-function fetchOnce(url: string, timeoutMs: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let req: import('http').ClientRequest | null = null;
-
-    const totalTimer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        req?.destroy();
-        reject(new Error(`请求超时 (${timeoutMs}ms)`));
-      }
-    }, timeoutMs + 5000);
-
-    const done = (err: Error | null, data?: Buffer) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(totalTimer);
-      if (err) reject(err);
-      else resolve(data!);
-    };
-
-    const options: https.RequestOptions = {
-      headers: {
-        'Referer': 'https://emweb.securities.eastmoney.com',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      timeout: timeoutMs,
-    };
-    
-    req = https.get(url, options, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        fetchOnce(res.headers.location, timeoutMs).then(
-          (data) => done(null, data),
-          (err) => done(err)
-        );
-        return;
-      }
-
-      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-        let body = '';
-        res.on('data', (chunk) => { body += chunk; });
-        res.on('end', () => {
-          done(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
-        });
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => {
-        const data = Buffer.concat(chunks);
-        done(null, data);
-      });
-      res.on('error', (err: Error) => {
-        done(err);
-      });
-    });
-    
-    req.on('error', (err: Error) => {
-      done(err);
-    });
-    
-    req.on('timeout', () => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(totalTimer);
-        req?.destroy();
-        reject(new Error(`请求超时 (${timeoutMs}ms)`));
-      }
-    });
-  });
-}
+import { httpClient } from '../utils/httpClient';
 
 function toEmCode(code: string): string {
   const market = detectMarket(code);
@@ -169,8 +52,9 @@ export async function getStockNews(code: string, page = 1, pageSize = 20): Promi
   });
 
   const url = `https://search-api-web.eastmoney.com/search/jsonp?cb=jQuery&param=${encodeURIComponent(param)}`;
-  const buffer = await emFetch(url);
-  const text = buffer.toString('utf-8');
+  const text = await httpClient.fetchText(url, {
+    headers: { 'Referer': 'https://emweb.securities.eastmoney.com' },
+  });
 
   const jsonMatch = text.match(/jQuery\(([\s\S]*)\)/);
   if (!jsonMatch) return [];
@@ -210,8 +94,10 @@ export async function getResearchReports(code: string, page = 1, pageSize = 20):
   const beginYear = now.getFullYear() - 1;
   const beginTime = `${beginYear}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const url = `https://reportapi.eastmoney.com/report/list?industryCode=*&pageSize=${pageSize}&industry=*&rating=*&ratingChange=*&beginTime=${beginTime}&endTime=${endTime}&pageNo=${page}&fields=&qType=0&orgCode=&code=${code}`;
-  const buffer = await emFetch(url);
-  const data = JSON.parse(buffer.toString('utf-8'));
+  const text = await httpClient.fetchText(url, {
+    headers: { 'Referer': 'https://emweb.securities.eastmoney.com' },
+  });
+  const data = JSON.parse(text);
 
   const list: any[] = data?.data || [];
 
@@ -260,8 +146,10 @@ export interface FinanceIndicator {
 
 export async function getFinanceData(code: string): Promise<FinanceIndicator[]> {
   const url = `https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_FINANCE_MAINFINADATA&columns=REPORT_DATE_NAME,EPSJB,BPS,ROEJQ,TOTALOPERATEREVE,PARENTNETPROFIT,TOTALOPERATEREVETZ,PARENTNETPROFITTZ,XSMLL,XSJLL,ZCFZL&filter=(SECURITY_CODE%3D%22${code}%22)&pageNumber=1&pageSize=5&sortTypes=-1&sortColumns=REPORT_DATE&source=HSF10&client=PC&_=${Date.now()}`;
-  const buffer = await emFetch(url);
-  const data = JSON.parse(buffer.toString('utf-8'));
+  const text = await httpClient.fetchText(url, {
+    headers: { 'Referer': 'https://emweb.securities.eastmoney.com' },
+  });
+  const data = JSON.parse(text);
 
   const list: any[] = data?.result?.data || [];
   return list.map((item: any) => ({
@@ -289,8 +177,9 @@ export interface StockSearchResult {
 
 export async function searchStocks(keyword: string): Promise<StockSearchResult[]> {
   const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(keyword)}&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=20`;
-  const buffer = await emFetch(url);
-  const text = buffer.toString('utf-8');
+  const text = await httpClient.fetchText(url, {
+    headers: { 'Referer': 'https://emweb.securities.eastmoney.com' },
+  });
   const data = JSON.parse(text);
 
   const list: any[] = data?.QuotationCodeTable?.Data || [];
@@ -344,8 +233,10 @@ export async function getHotStocks(count = 20, rankType: HotStockRankType = 'top
   }
 
   const url = `https://push2.eastmoney.com/api/qt/clist/get?cb=&pn=1&pz=${count}&po=${po}&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=${fid}&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=${fields}&_=${Date.now()}`;
-  const buffer = await emFetch(url);
-  const data = JSON.parse(buffer.toString('utf-8'));
+  const text = await httpClient.fetchText(url, {
+    headers: { 'Referer': 'https://emweb.securities.eastmoney.com' },
+  });
+  const data = JSON.parse(text);
 
   const list: any[] = data?.data?.diff || [];
   return list.map((item: any) => ({
@@ -442,8 +333,10 @@ export async function getFullKlineData(code: string, preferStock?: boolean): Pro
 
 async function fetchKlineByRange(secid: string, code: string, beg: string, end: string, timeoutMs: number): Promise<DataSeries> {
   const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&beg=${beg}&end=${end}&lmt=100000&ut=fa5fd1943c7b386f172d6893dbfba10b&secid=${secid}&_=${Date.now()}`;
-  const buffer = await emFetch(url, timeoutMs);
-  const text = buffer.toString('utf-8');
+  const text = await httpClient.fetchText(url, {
+    timeoutMs,
+    headers: { 'Referer': 'https://emweb.securities.eastmoney.com' },
+  });
   const data = JSON.parse(text);
 
   const klines: string[] = data?.data?.klines || [];
@@ -482,12 +375,3 @@ async function fetchKlineByRange(secid: string, code: string, beg: string, end: 
   };
 }
 
-function hashColor(str: string): [number, number, number] {
-  const colors: [number, number, number][] = [
-    [86, 180, 233], [230, 159, 0], [0, 158, 115],
-    [204, 121, 167], [213, 94, 0], [240, 228, 66],
-  ];
-  let sum = 0;
-  for (let i = 0; i < str.length; i++) sum += str.charCodeAt(i);
-  return colors[sum % colors.length];
-}
